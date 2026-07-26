@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>รายงานการก่อสร้างประจำวัน</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script src="{{ url_for('static', filename='pdf.min.js') }}"></script>
+</head>
+<body>
+
+<div class="app-layout">
+
+  <!-- ===== ฝั่งซ้าย: ฟอร์ม ===== -->
+  <div class="form-col">
+
+    <div class="toolbar">
+      <button type="button" id="btnSave">บันทึกข้อมูล</button>
+      <button type="button" class="secondary" id="btnClear">ล้างแบบฟอร์ม</button>
+      <button type="button" class="secondary" id="btnToggleHistory">ดูรายงานที่บันทึกไว้</button>
+    </div>
+
+    <div id="statusMsg" class="status-msg" hidden></div>
+
+    <form class="frame" id="reportForm">
+
+      <!-- ===== หัวเรื่อง ===== -->
+      <div class="box box-header">
+        <h2 class="title">รายงานการก่อสร้างประจำวัน</h2>
+        <p class="subtitle">
+          ปรับปรุงห้องเรียน 2507, 2509, 2510, ห้องศรีตรัง, ห้อง Visiting Professor, ห้องวิเทศสัมพันธ์<br>
+          ณ มหาวิทยาลัยสงขลานครินทร์ วิทยาเขตภูเก็ต ตำบลกะทู้ อำเภอกะทู้ จังหวัดภูเก็ต
+        </p>
+        <p class="contract-line">สัญญาจ้างเลขที่ 7/2569 ลงวันที่ 5 พฤษภาคม 2569</p>
+      </div>
+
+      <!-- ===== วันที่ / จำนวนวัน ===== -->
+      <div class="box box-row">
+        <div class="field narrow">
+          <label for="reportDate">วันที่</label>
+          <input type="date" id="reportDate" name="reportDate">
+        </div>
+        <div class="field narrow">
+          <label for="totalDays">จำนวนวันทำงาน (วัน)</label>
+          <input type="number" id="totalDays" name="totalDays" value="120">
+        </div>
+        <div class="field narrow">
+          <label for="remainingDays">เหลือ (วัน)</label>
+          <input type="number" id="remainingDays" name="remainingDays">
+        </div>
+        <div class="field">
+          <label for="dueDate">ครบกำหนดส่งมอบภายใน</label>
+          <input type="text" id="dueDate" name="dueDate" value="2 กันยายน 2569">
+        </div>
+      </div>
+
+      <!-- ===== สภาพอากาศ ===== -->
+      <div class="box">
+        <div class="box-title">สภาพอากาศ</div>
+        <div class="weather-block">
+          <div class="weather-group">
+            <div class="weather-label">เช้า</div>
+            <div class="radio-row">
+              <label><input type="radio" name="weatherAM" value="แจ่มใส"> แจ่มใส</label>
+              <label><input type="radio" name="weatherAM" value="ฝนตก"> ฝนตก</label>
+              <label><input type="radio" name="weatherAM" value="ฝนตกหนัก"> ฝนตกหนัก</label>
+            </div>
+          </div>
+          <div class="weather-group">
+            <div class="weather-label">บ่าย</div>
+            <div class="radio-row">
+              <label><input type="radio" name="weatherPM" value="แจ่มใส"> แจ่มใส</label>
+              <label><input type="radio" name="weatherPM" value="ฝนตก"> ฝนตก</label>
+              <label><input type="radio" name="weatherPM" value="ฝนตกหนัก"> ฝนตกหนัก</label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== ตารางเจ้าหน้าที่ | ตารางเครื่องจักร (สองคอลัมน์ แบ่งด้วยเส้นกลาง) ===== -->
+      <div class="box box-split">
+        <div class="split-col">
+          <div class="box-title">จำนวนเจ้าหน้าที่ของผู้รับจ้าง</div>
+          <table class="count-table">
+            <tbody>
+              <tr><td>นายช่างคุมงาน</td><td><input type="number" name="staff_supervisor"></td></tr>
+              <tr><td>ช่างไฟฟ้า</td><td><input type="number" name="staff_electrician"></td></tr>
+              <tr><td>ช่างปูน</td><td><input type="number" name="staff_mason"></td></tr>
+              <tr><td>ช่างไม้</td><td><input type="number" name="staff_carpenter"></td></tr>
+              <tr><td>ช่างเหล็ก</td><td><input type="number" name="staff_steelworker"></td></tr>
+              <tr><td>ช่างทาสี</td><td><input type="number" name="staff_painter"></td></tr>
+              <tr><td>กรรมกร</td><td><input type="number" name="staff_labourer"></td></tr>
+              <tr><td>เจ้าหน้าที่ประจำสำนักงาน</td><td><input type="number" name="staff_office"></td></tr>
+              <tr>
+                <td><input type="text" name="staff_other_label" placeholder="อื่นๆ ระบุ"></td>
+                <td><input type="number" name="staff_other_count"></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="split-col">
+          <div class="box-title">จำนวนเครื่องจักรของผู้รับจ้าง</div>
+          <table class="count-table">
+            <tbody>
+              <tr><td>รถขุด</td><td><input type="number" name="eq_excavator"></td></tr>
+              <tr><td>รถหกล้อ</td><td><input type="number" name="eq_sixwheel"></td></tr>
+              <tr><td>Mobile Crane</td><td><input type="number" name="eq_crane"></td></tr>
+              <tr><td>ช่างโครงหลังคาเหล็ก</td><td><input type="number" name="eq_roofframe"></td></tr>
+              <tr>
+                <td><input type="text" name="eq_other_label" placeholder="อื่นๆ ระบุ"></td>
+                <td><input type="number" name="eq_other_count"></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ===== รายละเอียดงาน ===== -->
+      <div class="box">
+        <div class="box-title">รายละเอียดของงานที่ผู้รับจ้างปฏิบัติงาน</div>
+        <div class="row">
+          <div class="field wide">
+            <label for="workLocation">ตำแหน่งที่ดำเนินการ</label>
+            <input type="text" id="workLocation" name="workLocation" placeholder="เช่น ห้อง 2507, ห้องศรีตรัง">
+          </div>
+        </div>
+        <div class="row">
+          <div class="field wide">
+            <label for="workDone">งานที่ดำเนินการ (ทำอะไรบ้าง)</label>
+            <textarea id="workDone" name="workDone" rows="3"></textarea>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field wide">
+            <label for="workQuantity">ปริมาณงานที่ทำได้ (ถ้ามี เช่น จำนวน เมตร ตร.ม. งานแล้วเสร็จกี่ %)</label>
+            <textarea id="workQuantity" name="workQuantity" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== ปัญหา / แนวทางแก้ไข ===== -->
+      <div class="box">
+        <div class="box-title">ปัญหา / อุปสรรค และแนวทางแก้ไข</div>
+        <div class="row">
+          <div class="field wide">
+            <label for="problems">ปัญหา / อุปสรรค</label>
+            <textarea id="problems" name="problems" rows="3"></textarea>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field wide">
+            <label for="solutions">แนวทางการแก้ไข</label>
+            <textarea id="solutions" name="solutions" rows="3"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== ผู้รับจ้าง ===== -->
+      <div class="box">
+        <div class="row" style="margin-bottom:0;">
+          <div class="field wide">
+            <label for="contractor">ผู้รับจ้าง</label>
+            <input type="text" id="contractor" name="contractor" value="บริษัท อินเตอร์เทค อิเลคทริคแอด์บิ้ลด์ จำกัด">
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== ผู้ควบคุมงาน | ผู้รับจ้าง (สองคอลัมน์ แบ่งด้วยเส้นกลาง) ===== -->
+      <div class="box box-split box-last">
+        <div class="split-col sig-col">
+          <div class="sig-line"></div>
+          <input type="text" name="supervisorName" value="นายจรูญ เกื้อชู" class="sig-input">
+          <div class="sig-role">ผู้ควบคุมงาน</div>
+        </div>
+        <div class="split-col sig-col">
+          <div class="sig-line"></div>
+          <input type="text" name="contractorRepName" placeholder="ชื่อผู้ลงนาม" class="sig-input">
+          <div class="sig-role">ผู้รับจ้าง / ตัวแทนผู้รับจ้าง</div>
+        </div>
+      </div>
+
+      <p class="note">หมายเหตุ: ครบกำหนดส่งมอบภายใน 2 กันยายน 2569</p>
+    </form>
+
+    <section class="frame history-panel" id="historyPanel" hidden>
+      <div class="box">
+        <div class="box-title">รายงานที่บันทึกไว้</div>
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>วันที่รายงาน</th>
+              <th>ตำแหน่งที่ดำเนินการ</th>
+              <th>บันทึกเมื่อ</th>
+              <th>การจัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody">
+            <!-- เติมด้วย JavaScript -->
+          </tbody>
+        </table>
+        <p id="historyEmpty" class="note" hidden>ยังไม่มีรายงานที่บันทึกไว้</p>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ===== ฝั่งขวา: PDF Preview (ค้างอยู่ตลอด) ===== -->
+  <div class="preview-col">
+    <div class="preview-panel">
+      <div class="preview-header">
+        <span>PDF Preview <span id="previewStatus" class="preview-status"></span></span>
+        <div class="preview-actions">
+          <button type="button" id="btnRefreshPreview">อัปเดตตัวอย่าง</button>
+          <button type="button" class="secondary" id="btnDownloadPreview">ดาวน์โหลด</button>
+        </div>
+      </div>
+      <div class="preview-body" id="previewBody">
+        <p class="note" id="previewLoading">กำลังสร้างตัวอย่าง...</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
