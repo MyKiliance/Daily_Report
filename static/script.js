@@ -12,10 +12,16 @@ const role = document.body.dataset.role;
 const targetId = Number(document.body.dataset.reportId) || null;
 const credentialKey = role === "issuer" ? "issuer-capability" : "filler-capability-"+targetId;
 const linkToken = location.hash.slice(1);
-if(linkToken){sessionStorage.setItem(credentialKey,linkToken);history.replaceState(null,"",location.pathname);}
-const credential = sessionStorage.getItem(credentialKey) || "";
+const tokenStore = role === "issuer" ? localStorage : sessionStorage;
+let credential = linkToken || sessionStorage.getItem(credentialKey) || tokenStore.getItem(credentialKey) || "";
+if(!credential && role === "issuer"){
+  const bytes=crypto.getRandomValues(new Uint8Array(32));
+  credential="issuer_"+btoa(String.fromCharCode(...bytes)).replaceAll("+","-").replaceAll("/","_").replace(/=+$/,"");
+}
+if(credential){tokenStore.setItem(credentialKey,credential);sessionStorage.setItem(credentialKey,credential);}
+if(linkToken)history.replaceState(null,"",location.pathname);
 window.addEventListener("hashchange",()=>{
-  if(location.hash.length>1){sessionStorage.setItem(credentialKey,location.hash.slice(1));history.replaceState(null,"",location.pathname);location.reload();}
+  if(location.hash.length>1){tokenStore.setItem(credentialKey,location.hash.slice(1));sessionStorage.setItem(credentialKey,location.hash.slice(1));history.replaceState(null,"",location.pathname);location.reload();}
 });
 let isHydrating=false;
 let hasAccess=false, workflowVersion=null, workflowStatus="draft", allowedFields=[...workflowConfig.defaultDelegate];
@@ -268,7 +274,7 @@ function applyWorkflow(){
   document.getElementById("btnSave").disabled=!editable||saving;
   document.getElementById("btnSaveAsNew").hidden=role!=="issuer"||!currentReportId||!editable;
   document.getElementById("btnClear").hidden=role!=="issuer";document.getElementById("btnToggleHistory").hidden=role!=="issuer";
-  const visible={btnIssue:role==="issuer"&&["draft","review"].includes(workflowStatus),btnSubmit:role==="filler"&&workflowStatus==="open",btnComplete:role==="issuer"&&workflowStatus==="review",btnReopen:role==="issuer"&&["review","completed"].includes(workflowStatus),btnEditDraft:role==="issuer"&&["open","completed"].includes(workflowStatus),btnRotate:role==="issuer"&&!!currentReportId&&workflowStatus!=="draft",btnRevoke:role==="issuer"&&!!currentReportId,btnReloadDocument:!!currentReportId,btnEvents:role==="issuer"&&!!currentReportId};
+  const visible={btnIssuerLink:role==="issuer",btnIssue:role==="issuer"&&["draft","review"].includes(workflowStatus),btnSubmit:role==="filler"&&workflowStatus==="open",btnComplete:role==="issuer"&&workflowStatus==="review",btnReopen:role==="issuer"&&["review","completed"].includes(workflowStatus),btnEditDraft:role==="issuer"&&["open","completed"].includes(workflowStatus),btnRotate:role==="issuer"&&!!currentReportId&&workflowStatus!=="draft",btnRevoke:role==="issuer"&&!!currentReportId,btnReloadDocument:!!currentReportId,btnEvents:role==="issuer"&&!!currentReportId};
   for(const [id,show] of Object.entries(visible))document.getElementById(id).hidden=!show;
   if(role==="filler"){form.querySelector("details").hidden=true;document.getElementById("formHelp").textContent=workflowStatus==="open" ? "กรอกเฉพาะช่องที่เปิดไว้ บันทึกระหว่างทำได้ เมื่อพร้อมให้กดส่งกลับตรวจ" : "เอกสารปิดรับการกรอกแล้ว สามารถดูตัวอย่างและดาวน์โหลดได้";}
   window.contractDatePicker.sync();
@@ -311,3 +317,9 @@ document.getElementById("btnEvents").addEventListener("click",async()=>{
 });
 
 document.getElementById("btnReloadDocument").addEventListener("click",()=>viewReport(currentReportId));
+
+document.getElementById("btnIssuerLink").addEventListener("click",async()=>{
+  const url=new URL("/manage",location.origin);url.hash=credential;
+  const input=document.getElementById("issuerLinkValue");input.value=url.href;document.getElementById("issuerLinkPanel").hidden=false;
+  try{await navigator.clipboard.writeText(url.href);showStatus("คัดลอกลิงก์จัดการส่วนตัวแล้ว เก็บไว้ใช้เอง ไม่ส่งให้ผู้กรอก");}catch{input.select();showStatus("เลือกลิงก์ส่วนตัวแล้ว กดคัดลอกเพื่อเก็บไว้ได้");}
+});
