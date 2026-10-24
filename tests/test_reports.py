@@ -286,6 +286,34 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':3,'reportMonth':'ตุลาคม','reportYear':'2569'}).status_code,200)
         self.assertEqual(filler.post(url,json={'version':4,'action':'submit'}).status_code,200)
 
+    def test_home_opens_issuer_form_without_private_link(self):
+        public=reports.app.test_client()
+        page=public.get('/').get_data(as_text=True)
+        self.assertIn('id="reportForm"',page)
+        self.assertIn('data-role="issuer"',page)
+        self.assertNotIn('ระบบเอกสารร่วมกัน</h1>',page)
+
+    def test_browser_issuers_can_only_manage_their_own_documents(self):
+        import secrets
+        first=reports.app.test_client()
+        second=reports.app.test_client()
+        first.environ_base['HTTP_AUTHORIZATION']='Bearer issuer_'+secrets.token_urlsafe(32)
+        second.environ_base['HTTP_AUTHORIZATION']='Bearer issuer_'+secrets.token_urlsafe(32)
+        self.assertEqual(first.get('/api/session').status_code,200)
+        created=first.post('/api/reports',json=self.data)
+        self.assertEqual(created.status_code,201)
+        report_id=created.json['id']
+        self.assertEqual(len(first.get('/api/reports').json),1)
+        self.assertEqual(second.get('/api/reports').json,[])
+        for endpoint in [f'/api/reports/{report_id}',f'/api/reports/{report_id}/pdf',f'/api/reports/{report_id}/events']:
+            self.assertEqual(second.get(endpoint).status_code,404)
+        self.assertEqual(second.put(f'/api/reports/{report_id}',json={'version':1,'workDone':'FORGED'}).status_code,404)
+        self.assertEqual(second.delete(f'/api/reports/{report_id}',json={'version':1}).status_code,404)
+        self.assertEqual(second.post(f'/api/reports/{report_id}/workflow',json={'version':1,'action':'issue'}).status_code,404)
+        self.assertEqual(second.get('/api/backup').json['reports'],[])
+        self.assertEqual(len(first.get('/api/backup').json['reports']),1)
+        self.assertEqual(len(self.client.get('/api/reports').json),1)  # Existing administrator links still work.
+
 
 if __name__ == '__main__':
     unittest.main()

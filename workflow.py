@@ -4,6 +4,7 @@ import hmac
 import io
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 from flask import abort, jsonify, render_template, request, send_file
@@ -17,6 +18,10 @@ def init_schema(cur, postgres):
         report_id INTEGER PRIMARY KEY REFERENCES reports(id) ON DELETE CASCADE,
         status TEXT NOT NULL DEFAULT 'draft', editable_fields TEXT NOT NULL DEFAULT '[]',
         fill_token_hash TEXT, revision INTEGER NOT NULL DEFAULT 1)''')
+    cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='report_workflows'" if postgres else "PRAGMA table_info(report_workflows)")
+    columns={row[0] if postgres else row[1] for row in cur.fetchall()}
+    if 'owner_hash' not in columns:
+        cur.execute('ALTER TABLE report_workflows ADD COLUMN owner_hash TEXT')
     cur.execute(f'''CREATE TABLE IF NOT EXISTS report_events (
         id {primary}, report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
         actor TEXT NOT NULL, action TEXT NOT NULL, created_at TEXT NOT NULL, changes TEXT NOT NULL)''')
@@ -66,9 +71,16 @@ def install(app, services):
         key = issuer_key(s['DATA_DIR'], s['ON_VERCEL'])
         return bool(key and bearer() and hmac.compare_digest(key, bearer()))
 
-    def require_manager():
-        if not manager():
-            abort(403, description='ต้องเปิดผ่านลิงก์ส่วนตัวของผู้ออกเอกสาร')
+    def owner_digest():
+        return hashlib.sha256(bearer().encode()).hexdigest()
+
+    def require_issuer():
+        if not manager() and not re.fullmatch(r'issuer_[A-Za-z0-9_-]{43}', bearer()):
+            abort(403, description='กรุณาเปิดหน้าผู้ออกเอกสารเพื่อเริ่มใช้งาน')
+
+    def require_document_issuer(role):
+        if role != 'issuer':
+            abort(403, description='เฉพาะผู้ออกเอกสารเจ้าของรายการเท่านั้น')
 
     def load(report_id):
         record = query(f'SELECT * FROM reports WHERE id = {ph}', (report_id,)).fetchone()
@@ -79,7 +91,7 @@ def install(app, services):
 
     def access(report_id):
         record, workflow = load(report_id)
-        if manager():
+        if manager() or (bearer() and workflow.get('owner_hash') and hmac.compare_digest(owner_digest(), workflow['owner_hash'])):
             return record, workflow, 'issuer'
         token = bearer()
         digest = hashlib.sha256(token.encode()).hexdigest() if token else ''
@@ -179,9 +191,6 @@ def install(app, services):
             abort(404)
 
     @app.route('/')
-    def welcome():
-        return render_template('welcome.html')
-
     @app.route('/manage')
     @app.route('/fill/<int:report_id>')
     def workspace(report_id=None):
@@ -192,14 +201,15 @@ def install(app, services):
 
     @app.route('/api/session')
     def session_info():
-        require_manager()
+        require_issuer()
         return jsonify(role='issuer')
 
     @app.route('/api/reports', methods=['GET', 'POST'])
     def reports():
-        require_manager()
+        require_issuer()
         if request.method == 'GET':
-            rows = query('SELECT r.id, r.created_at, r.updated_at, r.reportDay, r.reportMonth, r.reportYear, r.projectTitle, r.workLocation, w.status, w.revision AS version FROM reports r JOIN report_workflows w ON r.id=w.report_id ORDER BY r.id DESC').fetchall()
+            where = '' if manager() else f' WHERE w.owner_hash={ph}'
+            rows = query('SELECT r.id, r.created_at, r.updated_at, r.reportDay, r.reportMonth, r.reportYear, r.projectTitle, r.workLocation, w.status, w.revision AS version FROM reports r JOIN report_workflows w ON r.id=w.report_id'+where+' ORDER BY r.id DESC', () if manager() else (owner_digest(),)).fetchall()
             return jsonify([s['canonical_row'](row) for row in rows])
         raw = raw_json()
         data = s['report_data'](require_date=False, raw=raw)
@@ -210,7 +220,7 @@ def install(app, services):
         allowed = raw.get('editable_fields', default_delegate)
         if not isinstance(allowed, list) or any(not isinstance(k, str) or k not in delegate for k in allowed):
             abort(400, description='รายการช่องที่อนุญาตไม่ถูกต้อง')
-        query(f'INSERT INTO report_workflows (report_id, editable_fields) VALUES ({ph},{ph})', (report_id, json.dumps(sorted(set(allowed)))))
+        query(f'INSERT INTO report_workflows (report_id, editable_fields, owner_hash) VALUES ({ph},{ph},{ph})', (report_id, json.dumps(sorted(set(allowed))), owner_digest()))
         event(report_id, 'issuer', 'created', {k: data.get(k, '') for k in fields})
         db().commit()
         return jsonify(id=report_id, version=1, status='draft'), 201
@@ -223,7 +233,7 @@ def install(app, services):
         raw = raw_json()
         version(raw, workflow)
         if request.method == 'DELETE':
-            require_manager()
+            require_document_issuer(role)
             claim(report_id, workflow)
             query(f'DELETE FROM report_events WHERE report_id={ph}', (report_id,))
             query(f'DELETE FROM report_workflows WHERE report_id={ph}', (report_id,))
@@ -289,8 +299,9 @@ def install(app, services):
 
     @app.route('/api/reports/<int:report_id>/events')
     def events(report_id):
-        require_manager()
-        load(report_id)
+        require_issuer()
+        _, _, role = access(report_id)
+        require_document_issuer(role)
         rows = query(f'SELECT actor,action,created_at,changes FROM report_events WHERE report_id={ph} ORDER BY id DESC', (report_id,)).fetchall()
         return jsonify([dict(row) for row in rows])
 
@@ -311,12 +322,13 @@ def install(app, services):
             version(raw, workflow)
             data = validate_change(raw, record, workflow, role, preview=True)
         else:
-            require_manager()
+            require_issuer()
             data = s['report_data'](raw=raw)
         return send_file(io.BytesIO(s['build_pdf'](data)), mimetype='application/pdf', download_name='preview.pdf')
 
     @app.route('/api/backup')
     def backup():
-        require_manager()
-        rows = [s['canonical_row'](r) for r in query('SELECT * FROM reports ORDER BY id').fetchall()]
+        require_issuer()
+        where = '' if manager() else f' WHERE id IN (SELECT report_id FROM report_workflows WHERE owner_hash={ph})'
+        rows = [s['canonical_row'](r) for r in query('SELECT * FROM reports'+where+' ORDER BY id', () if manager() else (owner_digest(),)).fetchall()]
         return send_file(io.BytesIO(json.dumps({'reports': rows},ensure_ascii=False).encode()),mimetype='application/json',as_attachment=True,download_name='reports.json')
