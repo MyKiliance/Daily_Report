@@ -3,13 +3,18 @@
 <title>รายงานการก่อสร้างประจำวัน</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <script src="{{ url_for('static', filename='pdf.min.js') }}"></script></head>
-<body data-view="form">
+<body data-view="form" data-role="{{ role }}" data-report-id="{{ report_id or '' }}">
+<p id="accessNotice" class="doc" hidden>ลิงก์ไม่ถูกต้องหรือถูกยกเลิก กรุณาเปิดลิงก์ส่วนตัวที่ได้รับอีกครั้ง ผู้ออกเอกสารต้องตั้งค่า ISSUER_ACCESS_TOKEN บน Vercel ก่อนใช้งาน</p>
 <nav class="mobile-tabs" aria-label="สลับมุมมอง"><button id="tabForm" type="button" aria-pressed="true">กรอกข้อมูล</button><button id="tabPreview" type="button" aria-pressed="false">ดูตัวอย่าง PDF</button></nav>
 <div class="app-layout"><main class="form-col">
 <div class="toolbar"><button type="button" id="btnSave">บันทึกข้อมูล</button><button type="button" class="secondary" id="btnSaveAsNew" hidden>บันทึกเป็นรายการใหม่</button><button type="button" class="secondary" id="btnClear">เอกสารใหม่</button><button type="button" class="secondary" id="btnToggleHistory">ดูประวัติเอกสาร</button></div>
+<section class="workflow-panel" aria-label="ขั้นตอนเอกสาร"><strong id="roleLabel"></strong><p id="workflowStatus">กำลังตรวจสอบลิงก์...</p>
+<div class="workflow-actions"><button type="button" id="btnIssue" hidden>ออกเอกสารและสร้างลิงก์กรอก</button><button type="button" id="btnSubmit" hidden>ส่งกลับตรวจ</button><button type="button" id="btnComplete" hidden>ยืนยันเสร็จสิ้น</button><button type="button" id="btnReopen" hidden>เปิดให้กรอกใหม่</button><button type="button" id="btnEditDraft" hidden>กลับไปแก้รายละเอียด</button><button type="button" id="btnRotate" hidden>สร้างลิงก์กรอกใหม่</button><button type="button" id="btnRevoke" hidden>ยกเลิกลิงก์กรอก</button><button type="button" id="btnEvents" hidden>ประวัติการแก้ไข</button><button type="button" id="btnReloadDocument" hidden>โหลดข้อมูลล่าสุด</button></div>
+<div id="sharePanel" hidden><label class="field">ลิงก์สำหรับผู้กรอก (ส่งเฉพาะลิงก์นี้ให้ผู้ว่าจ้าง)<input id="fillerLink" type="text" readonly></label><button id="btnCopyLink" type="button">คัดลอกลิงก์ผู้กรอก</button><p class="note">ผู้ถือครองลิงก์ใช้สิทธิ์กรอกได้ ลิงก์ใหม่จะยกเลิกลิงก์เก่า</p></div><div id="eventPanel" hidden></div>
+</section>
 <div id="statusMsg" role="status" aria-live="polite" class="status-msg" hidden></div>
 <form class="doc" id="reportForm">
-<h1>รายงานการก่อสร้างประจำวัน</h1><p class="note">แก้ไขข้อมูลและชื่อรายการได้ ตัวอย่าง PDF จะอัปเดตอัตโนมัติ</p>
+<h1>รายงานการก่อสร้างประจำวัน</h1><p class="note"><span id="formHelp">ผู้ออกเอกสารเลือกช่อง “อนุญาตให้กรอก” แล้วบันทึกก่อนออกเอกสาร ช่องอื่นจะถูกล็อก</span></p>
 <fieldset><legend>ข้อมูลโครงการ</legend>
 {% for key, title in [('projectTitle','ชื่อรายงาน'),('projectSubtitle','ชื่อโครงการ'),('projectAddress','สถานที่'),('contractLine','เลขที่และวันที่สัญญา')] %}
 <label class="field">{{ title }}<input type="text" name="{{ key }}" value="{{ defaults[key] }}" maxlength="500"></label>{% endfor %}</fieldset>
@@ -17,7 +22,7 @@
 <label class="field">วันที่รายงาน<input type="number" name="reportDay" min="1" max="31" required></label>
 <label class="field">เดือน<select name="reportMonth" required><option value="">เลือกเดือน</option>{% for m in months %}<option>{{ m }}</option>{% endfor %}</select></label>
 <label class="field">พ.ศ.<input type="number" name="reportYear" min="544" max="10542" required placeholder="2569"></label>
-<label class="field">วันที่เริ่มสัญญา<input type="date" name="contractStartDate" value="{{ defaults.contractStartDate }}"></label>
+<div class="field"><label for="contractDateText">วันที่เริ่มสัญญา</label><div class="thai-date-field"><input id="contractDateText" type="text" inputmode="numeric" placeholder="วว/ดด/ปป" aria-describedby="contractDateHelp" autocomplete="off"><button id="openContractCalendar" type="button" class="secondary" aria-haspopup="dialog" aria-controls="contractCalendar" aria-label="เลือกวันที่เริ่มสัญญาจากปฏิทินไทย">ปฏิทิน</button></div><small id="contractDateHelp">วัน/เดือน/ปี พ.ศ. เช่น 14/05/2569</small><input type="hidden" name="contractStartDate" value="{{ defaults.contractStartDate }}"></div>
 <label class="field">จำนวนวันตามสัญญา<input type="number" name="totalDays" min="0" max="9999999" value="{{ defaults.totalDays }}"></label>
 <label class="field">วิธีระบุวันคงเหลือ<select name="remainingMode"><option value="auto">คำนวณอัตโนมัติ</option><option value="manual">กรอกเอง</option></select></label>
 <label class="field">วันคงเหลือ<input type="number" name="remainingDays" readonly></label></div></fieldset>
@@ -41,4 +46,7 @@
 <section class="frame history-panel" id="historyPanel" hidden><div class="box"><h2>ประวัติเอกสาร</h2><div class="field-grid"><label class="field">ค้นหาชื่อโครงการ / สถานที่ / วันที่<input id="historySearch" type="search"></label><label class="field">กรองเดือน<select id="historyMonth"><option value="">ทุกเดือน</option>{% for m in months %}<option>{{ m }}</option>{% endfor %}</select></label><label class="field">กรอง พ.ศ.<input id="historyYear" type="number" placeholder="ทุกปี"></label></div>
 <table class="history-table"><thead><tr><th>วันที่รายงาน</th><th>โครงการ / สถานที่</th><th>แก้ไขล่าสุด</th><th>จัดการ</th></tr></thead><tbody id="historyBody"></tbody></table><p id="historyEmpty" class="note" hidden>ไม่พบเอกสาร</p></div></section>
 </main><aside class="preview-col"><div class="preview-panel"><div class="preview-header"><span>ตัวอย่าง PDF <span id="previewStatus" class="preview-status" role="status"></span></span><div class="preview-actions"><button type="button" id="btnRefreshPreview">อัปเดต</button><button type="button" class="secondary" id="btnDownloadPreview">ดาวน์โหลด</button></div></div><div class="preview-body" id="previewBody"><p class="note">กำลังสร้างตัวอย่าง...</p></div></div></aside></div>
+<dialog id="contractCalendar" class="thai-calendar" aria-labelledby="calendarHeading"><header><h2 id="calendarHeading">วันที่เริ่มสัญญา</h2><button type="button" id="closeContractCalendar" class="secondary" aria-label="ปิดปฏิทิน">ปิด</button></header><div class="calendar-navigation"><button type="button" id="calendarPrev" class="secondary" aria-label="เดือนก่อนหน้า">‹</button><label class="sr-only" for="calendarMonth">เดือน</label><select id="calendarMonth"></select><label class="sr-only" for="calendarYear">ปี พ.ศ.</label><select id="calendarYear"></select><button type="button" id="calendarNext" class="secondary" aria-label="เดือนถัดไป">›</button></div><p id="calendarMonthLabel" class="sr-only" aria-live="polite"></p><div class="calendar-weekdays" aria-hidden="true"><span>อา.</span><span>จ.</span><span>อ.</span><span>พ.</span><span>พฤ.</span><span>ศ.</span><span>ส.</span></div><div id="calendarDays" class="calendar-days" role="group" aria-label="เลือกวัน"></div><footer><button type="button" id="calendarToday" class="secondary">วันนี้</button><button type="button" id="calendarClear" class="secondary">ล้างวันที่</button></footer></dialog>
+<script src="{{ url_for('static', filename='thai-date.js') }}"></script>
+<script id="workflowConfig" type="application/json">{{ {'delegate': delegate, 'defaultDelegate': default_delegate}|tojson }}</script>
 <script src="{{ url_for('static', filename='script.js') }}"></script></body></html>

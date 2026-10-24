@@ -4,11 +4,23 @@
       "src": "api/index.py",
       "use": "@vercel/python",
       "config": {
-        "includeFiles": ["templates/**", "static/**", "fonts/**", "template.pdf"]
+        "includeFiles": [
+          "app.py",
+          "report_schema.py",
+          "pdf_renderer.py",
+          "workflow.py",
+          "templates/**",
+          "static/**",
+          "fonts/**",
+          "template.pdf"
+        ]
       }
     }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "api/index.py" }
+    {
+      "src": "/(.*)",
+      "dest": "api/index.py"
+    }
   ]
 }

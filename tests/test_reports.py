@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 BOOT = tempfile.TemporaryDirectory(dir=ROOT)
 os.environ['RAILWAY_VOLUME_MOUNT_PATH'] = BOOT.name
+os.environ['ISSUER_ACCESS_TOKEN'] = 'test-issuer-capability-0123456789abcdef'
 for key in ('DATABASE_URL', 'POSTGRES_URL', 'POSTGRES_PRISMA_URL', 'VERCEL'):
     os.environ.pop(key, None)
 import app as reports
@@ -25,6 +26,7 @@ class ReportsTest(unittest.TestCase):
         reports.init_db()
         reports.app.config['TESTING'] = True
         self.client = reports.app.test_client()
+        self.client.environ_base["HTTP_AUTHORIZATION"] = "Bearer "+os.environ["ISSUER_ACCESS_TOKEN"]
         self.data = dict(reports.DEFAULTS, reportDay='24', reportMonth='ตุลาคม', reportYear='2569',
                          workDone='Test work', workLocation='Room 2507', staff_office='0')
 
@@ -41,15 +43,15 @@ class ReportsTest(unittest.TestCase):
         report = self.client.get(f'/api/reports/{report_id}').json
         self.assertEqual(report['staff_office'], '0')
         self.assertTrue(report['updated_at'].endswith('+07:00'))
-        response = self.client.put(f'/api/reports/{report_id}', json={'workLocation': 'Updated'})
+        response = self.client.put(f'/api/reports/{report_id}', json={'workLocation': 'Updated', 'version':1})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.client.get(f'/api/reports/{report_id}').json['workDone'], 'Test work')
         self.assertEqual(self.client.get('/api/reports').json[0]['workLocation'], 'Updated')
         backup = json.loads(self.client.get('/api/backup').data)
         self.assertEqual(backup['reports'][0]['id'], report_id)
-        self.assertEqual(self.client.delete(f'/api/reports/{report_id}').status_code, 200)
+        self.assertEqual(self.client.delete(f'/api/reports/{report_id}',json={'version':2}).status_code, 200)
         self.assertEqual(self.client.get(f'/api/reports/{report_id}').status_code, 404)
-        self.assertEqual(self.client.delete(f'/api/reports/{report_id}').status_code, 404)
+        self.assertEqual(self.client.delete(f'/api/reports/{report_id}',json={'version':2}).status_code, 404)
 
     def test_invalid_data(self):
         for patch in [{'reportDay':'31','reportMonth':'กุมภาพันธ์'}, {'staff_office':'-1'},
@@ -65,7 +67,7 @@ class ReportsTest(unittest.TestCase):
         auto = dict(self.data, reportDay='5', reportMonth='พฤษภาคม', remainingDays='999')
         report_id = self.create(auto)
         self.assertEqual(self.client.get(f'/api/reports/{report_id}').json['remainingDays'], '120')
-        self.client.put(f'/api/reports/{report_id}', json={'remainingMode':'manual', 'remainingDays':'-3'})
+        self.client.put(f'/api/reports/{report_id}', json={'remainingMode':'manual', 'remainingDays':'-3','version':1})
         self.assertEqual(self.client.get(f'/api/reports/{report_id}').json['remainingDays'], '-3')
 
     def test_custom_captions_rows_and_explicit_empty_values(self):
@@ -99,7 +101,7 @@ class ReportsTest(unittest.TestCase):
 
     def test_home_and_static_assets(self):
         self.assertEqual(self.client.get('/').status_code,200)
-        for name in ('script.js','style.css','pdf.min.js','worker.min.js','Sarabun.ttf'):
+        for name in ('script.js','thai-date.js','style.css','pdf.min.js','worker.min.js','Sarabun.ttf'):
             response = self.client.get('/static/'+name)
             self.assertEqual(response.status_code,200)
             response.close()
@@ -145,6 +147,144 @@ class ReportsTest(unittest.TestCase):
         text = '\n'.join(page.get_text() for page in pdf)
         for i in range(100):
             self.assertEqual(text.count('EXTRA-%03d'%i),1)
+
+
+class WorkflowTest(unittest.TestCase):
+    setUp = ReportsTest.setUp
+    tearDown = ReportsTest.tearDown
+    create = ReportsTest.create
+
+    def issue(self, allowed=None, **values):
+        report_id = self.create({**self.data, **values, 'editable_fields':allowed or ['workDone','staff_office']})
+        response = self.client.post(f'/api/reports/{report_id}/workflow', json={'version':1,'action':'issue'})
+        self.assertEqual(response.status_code,200,response.json)
+        token = response.json['filler_path'].split('#')[1]
+        filler = reports.app.test_client()
+        filler.environ_base['HTTP_AUTHORIZATION'] = 'Bearer '+token
+        return report_id, filler, token
+
+    def test_public_and_old_endpoints_are_protected(self):
+        report_id, _, _ = self.issue()
+        public = reports.app.test_client()
+        for endpoint in ['/api/reports','/api/session','/api/backup',f'/api/reports/{report_id}/events']:
+            self.assertEqual(public.get(endpoint).status_code,403)
+        for endpoint in [f'/api/reports/{report_id}',f'/api/reports/{report_id}/pdf']:
+            self.assertEqual(public.get(endpoint).status_code,404)
+        self.assertEqual(public.post('/api/preview',json=self.data).status_code,403)
+        self.assertEqual(public.post('/api/reports',json=self.data).status_code,403)
+        self.assertEqual(public.get('/static/app.py').status_code,404)
+        self.assertNotIn('Room 2507',public.get('/').get_data(as_text=True))
+
+    def test_filler_edit_lock_and_document_scope(self):
+        report_id, filler, _ = self.issue()
+        another = self.create()
+        data = filler.get(f'/api/reports/{report_id}').json
+        self.assertEqual(data['role'],'filler')
+        self.assertNotIn('fill_token_hash',data)
+        self.assertEqual(filler.get(f'/api/reports/{another}').status_code,404)
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':2,'projectTitle':'FORGED'}).status_code,403)
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':2,'editable_fields':['projectTitle']}).status_code,403)
+        self.assertEqual(filler.delete(f'/api/reports/{report_id}',json={'version':2}).status_code,403)
+        self.assertEqual(filler.get('/api/reports').status_code,403)
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':2,'workDone':'Filled'}).status_code,200)
+        self.assertEqual(self.client.get(f'/api/reports/{report_id}').json['workDone'],'Filled')
+        self.assertEqual(filler.get(f'/api/reports/{report_id}/pdf').status_code,200)
+
+    def test_full_lifecycle(self):
+        report_id, filler, _ = self.issue()
+        url = f'/api/reports/{report_id}/workflow'
+        self.assertEqual(self.client.put(f'/api/reports/{report_id}',json={'version':2,'workDone':'blocked'}).status_code,403)
+        self.assertEqual(filler.post(url,json={'version':2,'action':'complete'}).status_code,403)
+        self.assertEqual(filler.post(url,json={'version':2,'action':'submit'}).json['status'],'review')
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':3,'workDone':'blocked'}).status_code,403)
+        self.assertEqual(filler.post('/api/preview',json={'report_id':report_id,'version':3}).status_code,200)
+        self.assertEqual(self.client.post(url,json={'version':3,'action':'complete'}).json['status'],'completed')
+        self.assertEqual(self.client.put(f'/api/reports/{report_id}',json={'version':4,'workDone':'blocked'}).status_code,403)
+        reopened = self.client.post(url,json={'version':4,'action':'reopen'})
+        self.assertEqual(reopened.json['status'],'open')
+        self.assertEqual(filler.get(f'/api/reports/{report_id}').status_code,404)
+        events = self.client.get(f'/api/reports/{report_id}/events').json
+        self.assertEqual([e['action'] for e in events],['reopen','complete','submit','issue','created'])
+        self.assertEqual(events[2]['actor'],'filler')
+
+    def test_rotation_revocation_and_no_token_leaks(self):
+        report_id, filler, old_token = self.issue()
+        url = f'/api/reports/{report_id}/workflow'
+        result = self.client.post(url,json={'version':2,'action':'rotate'})
+        self.assertEqual(filler.get(f'/api/reports/{report_id}').status_code,404)
+        new_token = result.json['filler_path'].split('#')[1]
+        filler.environ_base['HTTP_AUTHORIZATION'] = 'Bearer '+new_token
+        self.assertEqual(filler.get(f'/api/reports/{report_id}').status_code,200)
+        for endpoint in [f'/api/reports/{report_id}', '/api/reports', f'/api/reports/{report_id}/events', '/api/backup']:
+            body = self.client.get(endpoint).get_data(as_text=True)
+            self.assertNotIn(old_token,body)
+            self.assertNotIn(new_token,body)
+        self.client.post(url,json={'version':3,'action':'revoke'})
+        self.assertEqual(filler.get(f'/api/reports/{report_id}').status_code,404)
+
+    def test_optimistic_concurrency(self):
+        report_id, filler, _ = self.issue()
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'workDone':'no version'}).status_code,428)
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':2,'workDone':'First'}).status_code,200)
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':2,'workDone':'Stale'}).status_code,409)
+        self.assertEqual(filler.post(f'/api/reports/{report_id}/workflow',json={'version':2,'action':'submit'}).status_code,409)
+        self.assertEqual(filler.get(f'/api/reports/{report_id}').json['workDone'],'First')
+
+    def test_extra_counts_without_structural_access(self):
+        extra = [{'group':0,'label':'Fixed item','count':'1'}]
+        report_id, filler, _ = self.issue(['extraCount:0'],extraRows=json.dumps(extra))
+        extra[0]['count']='2'
+        response=filler.put(f'/api/reports/{report_id}',json={'version':2,'extraRows':json.dumps(extra)})
+        self.assertEqual(response.status_code,200,response.json)
+        extra[0]['label']='FORGED'
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':3,'extraRows':json.dumps(extra)}).status_code,403)
+        extra[0]['label']='Fixed item'
+        extra.append({'group':0,'label':'New item','count':'9'})
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':3,'extraRows':json.dumps(extra)}).status_code,403)
+
+    def test_locked_computed_field_and_preview(self):
+        report_id, filler, _ = self.issue(['reportDay'])
+        before=filler.get(f'/api/reports/{report_id}').json['remainingDays']
+        response=filler.put(f'/api/reports/{report_id}',json={'version':2,'reportDay':'25'})
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(filler.get(f'/api/reports/{report_id}').json['remainingDays'],before)
+        self.assertEqual(filler.post('/api/preview',json={'report_id':report_id,'version':3,'projectTitle':'FORGED'}).status_code,403)
+
+    def test_invalid_permissions(self):
+        for allowed in ['workDone',['version'],['extraRows'],[{}]]:
+            response=self.client.post('/api/reports',json={**self.data,'editable_fields':allowed})
+            self.assertEqual(response.status_code,400)
+
+    def test_editing_issued_details_revokes_filler(self):
+        report_id, filler, _ = self.issue()
+        result=self.client.post(f'/api/reports/{report_id}/workflow',json={'version':2,'action':'edit'})
+        self.assertEqual(result.json['status'],'draft')
+        self.assertEqual(filler.get(f'/api/reports/{report_id}').status_code,404)
+        self.assertEqual(self.client.put(f'/api/reports/{report_id}',json={'version':3,'projectTitle':'New title'}).status_code,200)
+
+    def test_parallel_saves_have_one_winner(self):
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        report_id, _, token = self.issue()
+        barrier=threading.Barrier(2)
+        def save(text):
+            client=reports.app.test_client()
+            client.environ_base['HTTP_AUTHORIZATION']='Bearer '+token
+            barrier.wait(timeout=5)
+            return client.put(f'/api/reports/{report_id}',json={'version':2,'workDone':text}).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results=list(pool.map(save,['Concurrent A','Concurrent B']))
+        self.assertEqual(sorted(results),[200,409])
+        events=self.client.get(f'/api/reports/{report_id}/events').json
+        self.assertEqual(sum(event['action']=='saved' for event in events),1)
+
+    def test_issue_undated_draft_and_finish_date_as_filler(self):
+        report_id, filler, _=self.issue(['reportDay','reportMonth','reportYear'],reportDay='',reportMonth='',reportYear='')
+        url=f'/api/reports/{report_id}/workflow'
+        self.assertEqual(filler.post(url,json={'version':2,'action':'submit'}).status_code,400)
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':2,'reportDay':'24'}).status_code,200)
+        self.assertEqual(filler.put(f'/api/reports/{report_id}',json={'version':3,'reportMonth':'ตุลาคม','reportYear':'2569'}).status_code,200)
+        self.assertEqual(filler.post(url,json={'version':4,'action':'submit'}).status_code,200)
 
 
 if __name__ == '__main__':
