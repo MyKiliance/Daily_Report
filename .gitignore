@@ -8,3 +8,6 @@ output/preview.pdf
 # Local backups and verification artifacts
 *.before-migration-*.bak
 .audit/
+
+.issuer-access-key
+issuer-link.txt

@@ -15,6 +15,7 @@ import re
 import datetime
 import json
 import unicodedata
+from workflow import init_schema, install as install_workflow
 from report_schema import LABELS, GROUPS, EXTRA_FIELDS, label_key
 from pdf_renderer import render_report
 
@@ -145,7 +146,7 @@ PH = "%s" if USE_POSTGRES else "?"
 def get_db():
     if "db" not in g:
         if USE_POSTGRES:
-            g.db = psycopg2.connect(DATABASE_URL)
+            g.db = psycopg2.connect(DATABASE_URL, connect_timeout=10)
         else:
             g.db = sqlite3.connect(DB_PATH)
             g.db.row_factory = sqlite3.Row
@@ -179,9 +180,11 @@ def db_query(db, sql, params=()):
 def init_db():
     if ON_VERCEL and not USE_POSTGRES:
         raise RuntimeError("Vercel requires DATABASE_URL for persistent report storage")
-    db = psycopg2.connect(DATABASE_URL) if USE_POSTGRES else sqlite3.connect(DB_PATH)
+    db = psycopg2.connect(DATABASE_URL, connect_timeout=10) if USE_POSTGRES else sqlite3.connect(DB_PATH)
     try:
         cur = db.cursor()
+        if USE_POSTGRES:
+            cur.execute("SELECT pg_advisory_xact_lock(73452186)")
         cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'reports'" if USE_POSTGRES else "PRAGMA table_info(reports)")
         existing = {row[0] if USE_POSTGRES else row[1] for row in cur.fetchall()}
         missing = [field for field in FIELDS if field.lower() not in {x.lower() for x in existing}]
@@ -195,6 +198,7 @@ def init_db():
         if existing:
             for field in missing:
                 cur.execute(f'ALTER TABLE reports ADD COLUMN {"IF NOT EXISTS " if USE_POSTGRES else ""}{field} TEXT')
+        init_schema(cur, USE_POSTGRES)
         db.commit()
     finally:
         db.close()
@@ -209,8 +213,8 @@ def bad_request(error):
     return jsonify(error=error.description), 400
 
 
-def report_data(require_date=False, existing=None):
-    raw = request.get_json(silent=True)
+def report_data(require_date=False, existing=None, raw=None):
+    raw = request.get_json(silent=True) if raw is None else raw
     if not isinstance(raw, dict):
         abort(400, description='ข้อมูลต้องเป็น JSON object')
     data = {**DEFAULTS, **{k: v for k, v in (existing or {}).items() if v is not None}}
@@ -267,137 +271,6 @@ def report_data(require_date=False, existing=None):
         abort(400,description='รายการเพิ่มเติมไม่ถูกต้อง (สูงสุด 100 รายการ)')
     data['updated_at'] = now_bangkok()
     return data
-
-
-# ---------------------------------------------------------------------------
-# Routes - หน้าเว็บ
-# ---------------------------------------------------------------------------
-@app.route("/")
-def index():
-    return render_template("index.html", defaults=DEFAULTS, months=THAI_MONTHS, labels=LABELS, groups=GROUPS, label_key=label_key)
-
-
-# ---------------------------------------------------------------------------
-# Routes - API
-# ---------------------------------------------------------------------------
-@app.route("/api/reports", methods=["GET"])
-def list_reports():
-    db = get_db()
-    cur = db_query(
-        db,
-        "SELECT id, created_at, updated_at, reportDay, reportMonth, reportYear, projectTitle, workLocation "
-        "FROM reports ORDER BY id DESC",
-    )
-    rows = cur.fetchall()
-    return jsonify([canonical_row(r) for r in rows])
-
-
-@app.route("/api/reports/<int:report_id>", methods=["GET"])
-def get_report(report_id):
-    db = get_db()
-    cur = db_query(db, f"SELECT * FROM reports WHERE id = {PH}", (report_id,))
-    row = cur.fetchone()
-    if row is None:
-        abort(404, description="ไม่พบรายงานนี้")
-    return jsonify(canonical_row(row))
-
-
-@app.route("/api/reports", methods=["POST"])
-def create_report():
-    data = report_data(require_date=True)
-    values = [str(data.get(f, "") or "") for f in FIELDS]
-    created_at = now_bangkok()
-
-    db = get_db()
-    placeholders = ", ".join(PH for _ in FIELDS)
-    cols = ", ".join(FIELDS)
-
-    if USE_POSTGRES:
-        cur = db_query(
-            db,
-            f"INSERT INTO reports (created_at, {cols}) VALUES ({PH}, {placeholders}) RETURNING id",
-            [created_at] + values,
-        )
-        new_id = cur.fetchone()["id"]
-    else:
-        cur = db_query(
-            db,
-            f"INSERT INTO reports (created_at, {cols}) VALUES ({PH}, {placeholders})",
-            [created_at] + values,
-        )
-        new_id = cur.lastrowid
-
-    db.commit()
-    return jsonify({"id": new_id, "created_at": created_at}), 201
-
-
-@app.route("/api/reports/<int:report_id>", methods=["PUT"])
-def update_report(report_id):
-    """แก้ไขรายงานที่บันทึกไว้แล้ว (อัปเดตข้อมูลทับของเดิม แทนการสร้างรายการใหม่)"""
-    db = get_db()
-    existing = db_query(db, f"SELECT * FROM reports WHERE id = {PH}", (report_id,)).fetchone()
-    if existing is None:
-        abort(404, description="ไม่พบรายงานนี้")
-
-    data = report_data(require_date=True, existing=canonical_row(existing))
-    values = [str(data.get(f, "") or "") for f in FIELDS]
-
-    assignments = ", ".join(f"{f} = {PH}" for f in FIELDS)
-    db_query(
-        db,
-        f"UPDATE reports SET {assignments} WHERE id = {PH}",
-        values + [report_id],
-    )
-    db.commit()
-    return jsonify({"id": report_id, "updated": True})
-
-
-@app.route("/api/reports/<int:report_id>", methods=["DELETE"])
-def delete_report(report_id):
-    db = get_db()
-    deleted = db_query(db, f"DELETE FROM reports WHERE id = {PH}", (report_id,))
-    if not deleted.rowcount:
-        abort(404, description="ไม่พบรายงานนี้")
-    db.commit()
-    return jsonify({"deleted": report_id})
-
-
-@app.route("/api/reports/<int:report_id>/pdf", methods=["GET"])
-def export_pdf(report_id):
-    db = get_db()
-    row = db_query(db, f"SELECT * FROM reports WHERE id = {PH}", (report_id,)).fetchone()
-    if row is None:
-        abort(404, description="ไม่พบรายงานนี้")
-
-    row = canonical_row(row)
-    pdf_bytes = build_pdf(row)
-    date_part = "-".join(
-        str(row.get(k) or "") for k in ("reportYear", "reportMonth", "reportDay")
-    ).strip("-") or str(row["id"])
-    filename = f"daily-report-{date_part}.pdf"
-    return send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=filename,
-    )
-
-
-@app.route("/api/preview", methods=["POST"])
-def preview_pdf():
-    """
-    สร้าง PDF จากข้อมูลในฟอร์มปัจจุบัน (ยังไม่ได้บันทึก) เพื่อดูตัวอย่างในเบราว์เซอร์ด้วย pdf.js
-    สร้างและส่งกลับในหน่วยความจำ เพื่อไม่ให้พรีวิวของผู้ใช้เขียนทับกัน
-    """
-    data = report_data()
-    pdf_bytes = build_pdf(data)
-
-    return send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype="application/pdf",
-        as_attachment=False,
-        download_name="preview.pdf",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -466,12 +339,7 @@ def build_pdf(data: dict) -> bytes:
     return render_report(data, DEFAULTS, register_fonts, wrap_text)
 
 
-@app.route('/api/backup', methods=['GET'])
-def backup_reports():
-    rows = [canonical_row(row) for row in db_query(get_db(), 'SELECT * FROM reports ORDER BY id').fetchall()]
-    payload = json.dumps({'version': 1, 'exported_at': now_bangkok(), 'reports': rows}, ensure_ascii=False, indent=2)
-    return send_file(io.BytesIO(payload.encode('utf-8')), mimetype='application/json', as_attachment=True,
-                     download_name='reports-backup-'+now_bangkok()[:10]+'.json')
+install_workflow(app, globals())
 
 
 # ---------------------------------------------------------------------------
