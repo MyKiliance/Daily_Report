@@ -232,7 +232,11 @@ function setPermissions(keys){form.querySelectorAll("[data-permission]").forEach
 function refreshExtraPermissions(){
   form.querySelectorAll(".extra-row").forEach((row,index)=>{
     const key="extraCount:"+index;let toggle=row.querySelector("[data-permission]");
-    if(!toggle){const label=document.createElement("label");label.className="permission-choice";toggle=document.createElement("input");toggle.type="checkbox";toggle.checked=allowedFields.includes(key);label.append(toggle,document.createTextNode(" ให้กรอกจำนวน"));row.appendChild(label);}
+    if(!toggle){
+      const countField=row.querySelector("[data-count-input]").closest(".field");
+      const wrap=document.createElement("div");wrap.className="permission-wrap";countField.before(wrap);wrap.appendChild(countField);
+      const label=document.createElement("label");label.className="permission-choice";toggle=document.createElement("input");toggle.type="checkbox";toggle.checked=allowedFields.includes(key);label.append(toggle,document.createTextNode(" อนุญาตให้กรอก"));wrap.appendChild(label);
+    }
     toggle.dataset.permission=key;row.querySelector("[data-count-input]").dataset.extraKey=key;
     row.querySelector(".permission-choice").hidden=role!=="issuer";
   });

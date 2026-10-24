@@ -33,3 +33,20 @@ input:focus,select:focus,textarea:focus{outline:2px solid #3972bc;outline-offset
 .permission-choice input{width:20px;min-height:20px;height:20px;flex:none}.permission-choice:has(input:checked){font-weight:bold}
 input:disabled,select:disabled,textarea:disabled{opacity:1;color:#5d6572;background:#eef0f3;border-color:#d9dce1;cursor:not-allowed}
 #sharePanel{margin-top:16px;padding:12px;background:#fff5df;border-radius:8px}#eventPanel{max-height:260px;overflow:auto;font-size:14px}.welcome{max-width:700px;margin:8vh auto}
+
+/* Size personnel cards against their own column, including split-screen layouts. */
+.personnel-group{container-type:inline-size;container-name:personnel}
+.personnel-row{grid-template-columns:minmax(0,1fr) minmax(160px,180px) auto;align-items:start;gap:12px;padding:14px;border:1px solid var(--border);border-radius:8px;background:#fafbfc;margin-bottom:14px}
+.personnel-row .permission-wrap{display:flex;flex-direction:column;gap:6px}
+.personnel-row .permission-wrap .field{margin:0}
+.personnel-row .permission-choice{margin:0;min-height:44px;white-space:nowrap;font-size:14px;gap:8px}
+.permission-choice input{padding:0;accent-color:var(--accent)}
+.personnel-row button{grid-column:auto;justify-self:end;align-self:start;margin-top:30px;white-space:nowrap}
+@container personnel (max-width:560px){
+ .personnel-row{grid-template-columns:minmax(0,1fr) 160px}
+ .personnel-row button{grid-column:1/-1;margin-top:0}
+}
+@container personnel (max-width:380px){
+ .personnel-row{grid-template-columns:minmax(0,1fr);padding:12px}
+ .personnel-row button{width:100%;justify-self:stretch}
+}
