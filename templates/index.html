@@ -14,7 +14,7 @@
 </section>
 <div id="statusMsg" role="status" aria-live="polite" class="status-msg" hidden></div>
 <form class="doc" id="reportForm">
-<h1>รายงานการก่อสร้างประจำวัน</h1><p class="note"><span id="formHelp">ผู้ออกเอกสารเลือกช่อง “ให้ผู้ว่าจ้างกรอก” แล้วบันทึกก่อนออกเอกสาร ช่องอื่นจะถูกล็อก</span></p>
+<h1>รายงานการก่อสร้างประจำวัน</h1><p class="note"><span id="formHelp">ผู้ออกเอกสารเลือกช่อง “อนุญาตให้กรอก” แล้วบันทึกก่อนออกเอกสาร ช่องอื่นจะถูกล็อก</span></p>
 <fieldset><legend>ข้อมูลโครงการ</legend>
 {% for key, title in [('projectTitle','ชื่อรายงาน'),('projectSubtitle','ชื่อโครงการ'),('projectAddress','สถานที่'),('contractLine','เลขที่และวันที่สัญญา')] %}
 <label class="field">{{ title }}<input type="text" name="{{ key }}" value="{{ defaults[key] }}" maxlength="500"></label>{% endfor %}</fieldset>

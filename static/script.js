@@ -245,7 +245,7 @@ function installPermissions(){
     const wrap=document.createElement("div");wrap.className="permission-wrap";original.before(wrap);wrap.appendChild(original);
     const label=document.createElement("label");label.className="permission-choice";
     const toggle=document.createElement("input");toggle.type="checkbox";toggle.dataset.permission=key;toggle.checked=allowedFields.includes(key);
-    label.append(toggle,document.createTextNode(" ให้ผู้ว่าจ้างกรอก"));wrap.appendChild(label);
+    label.append(toggle,document.createTextNode(" อนุญาตให้กรอก"));wrap.appendChild(label);
   }
 }
 function applyWorkflow(){
