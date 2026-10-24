@@ -1,234 +1,44 @@
 <!DOCTYPE html>
-<html lang="th">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>รายงานการก่อสร้างประจำวัน</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<script src="{{ url_for('static', filename='pdf.min.js') }}"></script>
-</head>
-<body>
-
-<div class="app-layout">
-
-  <!-- ===== ฝั่งซ้าย: ฟอร์ม ===== -->
-  <div class="form-col">
-
-    <div class="toolbar">
-      <button type="button" id="btnSave">บันทึกข้อมูล</button>
-      <button type="button" class="secondary" id="btnClear">ล้างแบบฟอร์ม</button>
-      <button type="button" class="secondary" id="btnToggleHistory">ดูรายงานที่บันทึกไว้</button>
-    </div>
-
-    <div id="statusMsg" class="status-msg" hidden></div>
-
-    <form class="doc" id="reportForm">
-
-      <!-- ===== หัวเอกสาร (ไม่มีกรอบ ตรงตามต้นฉบับ) ===== -->
-      <div class="doc-header">
-        <input type="text" class="doc-title-input" name="projectTitle" value="{{ defaults.projectTitle }}">
-        <input type="text" class="doc-line-input" name="projectSubtitle" value="{{ defaults.projectSubtitle }}">
-        <input type="text" class="doc-line-input" name="projectAddress" value="{{ defaults.projectAddress }}">
-        <input type="text" class="doc-line-input" name="contractLine" value="{{ defaults.contractLine }}">
-      </div>
-
-      <!-- จำนวนวันทำงาน / เหลือ -->
-      <div class="doc-row">
-        <span>จำนวนวันทำงาน</span>
-        <input type="number" class="inline-input narrow" name="totalDays" value="{{ defaults.totalDays }}">
-        <span>วัน. เหลือ</span>
-        <input type="number" class="inline-input narrow" name="remainingDays">
-        <span>วัน.</span>
-      </div>
-
-      <!-- วันที่ / เดือน / พ.ศ. -->
-      <div class="doc-row">
-        <span>วันที่</span>
-        <input type="number" class="inline-input xnarrow" name="reportDay" min="1" max="31" placeholder="วัน">
-        <span>เดือน</span>
-        <select class="inline-input select-month" name="reportMonth">
-          <option value=""></option>
-          {% for m in months %}
-          <option value="{{ m }}">{{ m }}</option>
-          {% endfor %}
-        </select>
-        <span>พ.ศ.</span>
-        <input type="number" class="inline-input narrow" name="reportYear" placeholder="เช่น 2569">
-      </div>
-
-      <!-- สภาพอากาศ -->
-      <div class="doc-row weather-row">
-        <span class="doc-label-bold">สภาพอากาศ</span>
-      </div>
-      <div class="doc-row weather-row">
-        <span class="weather-day">เช้า</span>
-        <label><input type="radio" name="weatherAM" value="แจ่มใส"> แจ่มใส</label>
-        <label><input type="radio" name="weatherAM" value="ฝนตก"> ฝนตก</label>
-        <label><input type="radio" name="weatherAM" value="ฝนตกหนัก"> ฝนตกหนัก</label>
-      </div>
-      <div class="doc-row weather-row">
-        <span class="weather-day">บ่าย</span>
-        <label><input type="radio" name="weatherPM" value="แจ่มใส"> แจ่มใส</label>
-        <label><input type="radio" name="weatherPM" value="ฝนตก"> ฝนตก</label>
-        <label><input type="radio" name="weatherPM" value="ฝนตกหนัก"> ฝนตกหนัก</label>
-      </div>
-
-      <!-- จำนวนรวม เจ้าหน้าที่ / เครื่องจักร -->
-      <div class="doc-row totals-row">
-        <span class="doc-label-bold">จำนวนเจ้าหน้าที่ของผู้รับจ้าง</span>
-        <input type="number" class="inline-input narrow" name="totalStaffCount">
-        <span>คน</span>
-        <span class="doc-label-bold totals-second">จำนวนเครื่องจักรของผู้รับจ้าง</span>
-        <input type="number" class="inline-input narrow" name="totalEquipmentCount">
-        <span>คน</span>
-      </div>
-
-      <!-- ===== ตาราง 1: เจ้าหน้าที่ / เครื่องจักร (3 คู่คอลัมน์ x 7 แถว) ===== -->
-      <table class="grid-table table1">
-        <thead>
-          <tr>
-            <th>ประเภท</th><th>คน</th>
-            <th>ประเภท</th><th>คน</th>
-            <th>ประเภท</th><th>คน</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td data-label="ประเภท">เจ้าหน้าที่ประจำสำนักงาน</td><td data-label="คน"><input type="number" name="staff_office"></td>
-            <td data-label="ประเภท">รถขุด</td><td data-label="คน"><input type="number" name="eq_excavator"></td>
-            <td data-label="ประเภท">ช่างโครงหลังคาเหล็ก</td><td data-label="คน"><input type="number" name="eq_roofframe"></td>
-          </tr>
-          <tr>
-            <td data-label="ประเภท">นายช่างคุมงาน</td><td data-label="คน"><input type="number" name="staff_supervisor"></td>
-            <td data-label="ประเภท">รถหกล้อ</td><td data-label="คน"><input type="number" name="eq_sixwheel"></td>
-            <td data-label="ประเภท">ช่างไฟฟ้า</td><td data-label="คน"><input type="number" name="staff_electrician"></td>
-          </tr>
-          <tr>
-            <td data-label="ประเภท">ช่างไม้</td><td data-label="คน"><input type="number" name="staff_carpenter"></td>
-            <td data-label="ประเภท">Mobile Crane</td><td data-label="คน"><input type="number" name="eq_crane"></td>
-            <td class="blank"></td><td class="blank"></td>
-          </tr>
-          <tr>
-            <td data-label="ประเภท">ช่างเหล็ก</td><td data-label="คน"><input type="number" name="staff_steel"></td>
-            <td data-label="ประเภท"><input type="text" class="cell-text-input" name="eq_other_label" placeholder="อื่นๆ ระบุ"></td>
-            <td data-label="คน"><input type="number" name="eq_other_count"></td>
-            <td class="blank"></td><td class="blank"></td>
-          </tr>
-          <tr>
-            <td data-label="ประเภท">ช่างปูน</td><td data-label="คน"><input type="number" name="staff_mason"></td>
-            <td class="blank"></td><td class="blank"></td>
-            <td class="blank"></td><td class="blank"></td>
-          </tr>
-          <tr>
-            <td data-label="ประเภท">กรรมกร</td><td data-label="คน"><input type="number" name="staff_labourer"></td>
-            <td class="blank"></td><td class="blank"></td>
-            <td class="blank"></td><td class="blank"></td>
-          </tr>
-          <tr>
-            <td data-label="ประเภท">ช่างทาสี</td><td data-label="คน"><input type="number" name="staff_painter"></td>
-            <td class="blank"></td><td class="blank"></td>
-            <td class="blank"></td><td class="blank"></td>
-          </tr>
-        </tbody>
-      </table>
-
-      <!-- ===== ตาราง 2: รายละเอียดงาน (3 คอลัมน์) ===== -->
-      <table class="grid-table table2">
-        <thead>
-          <tr>
-            <th colspan="2">รายละเอียดของงานที่ผู้รับจ้างปฏิบัติงาน</th>
-            <th rowspan="2">ปริมาณงานที่ทำได้<br><span class="th-sub">(ถ้ามี เช่น จำนวน เมตร ตร.ม. งานแล้วเสร็จกี่ %)</span></th>
-          </tr>
-          <tr>
-            <th>งานที่ดำเนินการ<br><span class="th-sub">(ทำอะไรบ้าง)</span></th>
-            <th>ตำแหน่งที่ดำเนินการ</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><textarea name="workDone" rows="7" placeholder="งานที่ดำเนินการ (ทำอะไรบ้าง)"></textarea></td>
-            <td><textarea name="workLocation" rows="7" placeholder="ตำแหน่งที่ดำเนินการ"></textarea></td>
-            <td><textarea name="workQuantity" rows="7" placeholder="ปริมาณงานที่ทำได้"></textarea></td>
-          </tr>
-        </tbody>
-      </table>
-
-      <!-- ===== ตาราง 3: ปัญหา / แนวทางแก้ไข (2 คอลัมน์) ===== -->
-      <div class="table3-label-row">
-        <span>ปัญหา / อุปสรรค</span>
-        <span>แนวทางการแก้ไข</span>
-      </div>
-      <table class="grid-table table3">
-        <tbody>
-          <tr>
-            <td><textarea name="problems" rows="4" placeholder="ปัญหา / อุปสรรค"></textarea></td>
-            <td><textarea name="solutions" rows="4" placeholder="แนวทางการแก้ไข"></textarea></td>
-          </tr>
-        </tbody>
-      </table>
-
-      <!-- ===== ลายเซ็น ===== -->
-      <div class="signatures">
-        <div class="sig-col">
-          <div class="sig-line"></div>
-          <input type="text" name="supervisorName" value="{{ defaults.supervisorName }}" class="sig-input">
-          <div class="sig-role">ผู้ควบคุมงาน</div>
-        </div>
-        <div class="sig-col">
-          <div class="sig-line"></div>
-          <input type="text" name="contractorRepName" value="{{ defaults.contractorRepName }}" class="sig-input">
-          <div class="sig-role">ผู้รับจ้าง/ตัวแทนผู้รับจ้าง</div>
-        </div>
-      </div>
-
-      <!-- ===== หมายเหตุ ===== -->
-      <div class="doc-row note-row">
-        <span class="underline-label">หมายเหตุ</span>
-        <span>ครบกำหนดส่งมอบภายใน</span>
-        <input type="text" class="inline-input wide" name="dueDate" value="{{ defaults.dueDate }}">
-      </div>
-    </form>
-
-    <section class="frame history-panel" id="historyPanel" hidden>
-      <div class="box">
-        <div class="box-title">รายงานที่บันทึกไว้</div>
-        <table class="history-table">
-          <thead>
-            <tr>
-              <th>วันที่รายงาน</th>
-              <th>ตำแหน่งที่ดำเนินการ</th>
-              <th>บันทึกเมื่อ</th>
-              <th>การจัดการ</th>
-            </tr>
-          </thead>
-          <tbody id="historyBody">
-            <!-- เติมด้วย JavaScript -->
-          </tbody>
-        </table>
-        <p id="historyEmpty" class="note" hidden>ยังไม่มีรายงานที่บันทึกไว้</p>
-      </div>
-    </section>
-
-  </div>
-
-  <!-- ===== ฝั่งขวา: PDF Preview (ค้างอยู่ตลอด) ===== -->
-  <div class="preview-col">
-    <div class="preview-panel">
-      <div class="preview-header">
-        <span>PDF Preview <span id="previewStatus" class="preview-status"></span></span>
-        <div class="preview-actions">
-          <button type="button" id="btnRefreshPreview">อัปเดตตัวอย่าง</button>
-          <button type="button" class="secondary" id="btnDownloadPreview">ดาวน์โหลด</button>
-        </div>
-      </div>
-      <div class="preview-body" id="previewBody">
-        <p class="note" id="previewLoading">กำลังสร้างตัวอย่าง...</p>
-      </div>
-    </div>
-  </div>
-
-</div>
-
-<script src="{{ url_for('static', filename='script.js') }}"></script>
-</body>
-</html>
+<script src="{{ url_for('static', filename='pdf.min.js') }}"></script></head>
+<body data-view="form">
+<nav class="mobile-tabs" aria-label="สลับมุมมอง"><button id="tabForm" type="button" aria-pressed="true">กรอกข้อมูล</button><button id="tabPreview" type="button" aria-pressed="false">ดูตัวอย่าง PDF</button></nav>
+<div class="app-layout"><main class="form-col">
+<div class="toolbar"><button type="button" id="btnSave">บันทึกข้อมูล</button><button type="button" class="secondary" id="btnSaveAsNew" hidden>บันทึกเป็นรายการใหม่</button><button type="button" class="secondary" id="btnClear">เอกสารใหม่</button><button type="button" class="secondary" id="btnToggleHistory">ดูประวัติเอกสาร</button></div>
+<div id="statusMsg" role="status" aria-live="polite" class="status-msg" hidden></div>
+<form class="doc" id="reportForm">
+<h1>รายงานการก่อสร้างประจำวัน</h1><p class="note">แก้ไขข้อมูลและชื่อรายการได้ ตัวอย่าง PDF จะอัปเดตอัตโนมัติ</p>
+<fieldset><legend>ข้อมูลโครงการ</legend>
+{% for key, title in [('projectTitle','ชื่อรายงาน'),('projectSubtitle','ชื่อโครงการ'),('projectAddress','สถานที่'),('contractLine','เลขที่และวันที่สัญญา')] %}
+<label class="field">{{ title }}<input type="text" name="{{ key }}" value="{{ defaults[key] }}" maxlength="500"></label>{% endfor %}</fieldset>
+<fieldset><legend>วันที่และระยะเวลาสัญญา</legend><div class="field-grid">
+<label class="field">วันที่รายงาน<input type="number" name="reportDay" min="1" max="31" required></label>
+<label class="field">เดือน<select name="reportMonth" required><option value="">เลือกเดือน</option>{% for m in months %}<option>{{ m }}</option>{% endfor %}</select></label>
+<label class="field">พ.ศ.<input type="number" name="reportYear" min="544" max="10542" required placeholder="2569"></label>
+<label class="field">วันที่เริ่มสัญญา<input type="date" name="contractStartDate" value="{{ defaults.contractStartDate }}"></label>
+<label class="field">จำนวนวันตามสัญญา<input type="number" name="totalDays" min="0" max="9999999" value="{{ defaults.totalDays }}"></label>
+<label class="field">วิธีระบุวันคงเหลือ<select name="remainingMode"><option value="auto">คำนวณอัตโนมัติ</option><option value="manual">กรอกเอง</option></select></label>
+<label class="field">วันคงเหลือ<input type="number" name="remainingDays" readonly></label></div></fieldset>
+<fieldset><legend data-caption="weatherLabel">สภาพอากาศ</legend><div class="field-grid">
+{% for key,title in [('weatherAM','เช้า'),('weatherPM','บ่าย')] %}<label class="field">{{ title }}<select name="{{ key }}"><option value="">ยังไม่ระบุ</option><option value="แจ่มใส" data-caption="weatherClearLabel">แจ่มใส</option><option value="ฝนตก" data-caption="weatherRainLabel">ฝนตก</option><option value="ฝนตกหนัก" data-caption="weatherHeavyLabel">ฝนตกหนัก</option></select></label>{% endfor %}
+</div></fieldset>
+<fieldset><legend>บุคลากรและเครื่องจักร</legend><div class="field-grid"><label class="field"><span data-caption="staffTotalLabel">จำนวนเจ้าหน้าที่ของผู้รับจ้าง</span><input type="number" name="totalStaffCount" min="0" max="9999999"></label><label class="field"><span data-caption="equipmentTotalLabel">จำนวนเครื่องจักรของผู้รับจ้าง</span><input type="number" name="totalEquipmentCount" min="0" max="9999999"></label></div>
+<p class="note">เปลี่ยนชื่อรายการได้ ปุ่มล้างรายการจะเว้นแถวนั้นในเอกสาร รายการที่เกินพื้นที่จะอยู่หน้าต่อ</p>
+{% for group in groups %}<section class="personnel-group"><h3>{{ ['บุคลากร','เครื่องจักร','บุคลากรเพิ่มเติม'][loop.index0] }}</h3>
+{% for key,title in group %}<div class="personnel-row base-row"><label class="field">ประเภท<input type="text" name="{{ label_key(key) }}" value="{{ defaults[label_key(key)] }}" maxlength="300"></label><label class="field">จำนวน<input type="number" name="{{ key }}" min="0" max="9999999"></label><button type="button" class="secondary clear-row">ล้างรายการ</button></div>{% endfor %}
+<div class="extra-rows" data-group="{{ loop.index0 }}"></div><button class="secondary add-row" type="button" data-group="{{ loop.index0 }}">เพิ่มรายการ</button></section>{% endfor %}
+<input type="hidden" name="extraRows" value="[]"></fieldset>
+<fieldset><legend data-caption="workHeading">รายละเอียดของงานที่ผู้รับจ้างปฏิบัติงาน</legend>
+{% for key,title in [('workDone','งานที่ดำเนินการ (ทำอะไรบ้าง)'),('workLocation','ตำแหน่งที่ดำเนินการ'),('workQuantity','ปริมาณงานที่ทำได้')] %}<label class="field"><span data-caption="{{ key }}Label">{{ title }}</span><textarea name="{{ key }}" rows="5" maxlength="30000"></textarea></label>{% endfor %}</fieldset>
+<fieldset><legend>ปัญหาและการแก้ไข</legend>
+{% for key,title in [('problems','ปัญหา / อุปสรรค'),('solutions','แนวทางการแก้ไข')] %}<label class="field"><span data-caption="{{ key }}Label">{{ title }}</span><textarea name="{{ key }}" rows="4" maxlength="30000"></textarea></label>{% endfor %}</fieldset>
+<fieldset><legend>ผู้ลงนามและกำหนดส่งมอบ</legend>
+<label class="field">ชื่อผู้ควบคุมงาน<input type="text" name="supervisorName" value="{{ defaults.supervisorName }}" maxlength="500"></label><label class="field">ชื่อผู้รับจ้าง / ตัวแทน<input type="text" name="contractorRepName" value="{{ defaults.contractorRepName }}" maxlength="500"></label><label class="field">กำหนดส่งมอบ<input type="text" name="dueDate" value="{{ defaults.dueDate }}" maxlength="500"></label></fieldset>
+<details><summary>แก้ไขหัวข้อและข้อความประกอบเอกสาร</summary><div class="field-grid">{% for key,title in labels.items() %}<label class="field">{{ title }}<input type="text" name="{{ key }}" value="{{ title }}" maxlength="120"></label>{% endfor %}</div></details>
+</form>
+<section class="frame history-panel" id="historyPanel" hidden><div class="box"><h2>ประวัติเอกสาร</h2><div class="field-grid"><label class="field">ค้นหาชื่อโครงการ / สถานที่ / วันที่<input id="historySearch" type="search"></label><label class="field">กรองเดือน<select id="historyMonth"><option value="">ทุกเดือน</option>{% for m in months %}<option>{{ m }}</option>{% endfor %}</select></label><label class="field">กรอง พ.ศ.<input id="historyYear" type="number" placeholder="ทุกปี"></label></div>
+<table class="history-table"><thead><tr><th>วันที่รายงาน</th><th>โครงการ / สถานที่</th><th>แก้ไขล่าสุด</th><th>จัดการ</th></tr></thead><tbody id="historyBody"></tbody></table><p id="historyEmpty" class="note" hidden>ไม่พบเอกสาร</p></div></section>
+</main><aside class="preview-col"><div class="preview-panel"><div class="preview-header"><span>ตัวอย่าง PDF <span id="previewStatus" class="preview-status" role="status"></span></span><div class="preview-actions"><button type="button" id="btnRefreshPreview">อัปเดต</button><button type="button" class="secondary" id="btnDownloadPreview">ดาวน์โหลด</button></div></div><div class="preview-body" id="previewBody"><p class="note">กำลังสร้างตัวอย่าง...</p></div></div></aside></div>
+<script src="{{ url_for('static', filename='script.js') }}"></script></body></html>

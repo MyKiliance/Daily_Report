@@ -1,8 +1,37 @@
 # daily-report — รายงานการก่อสร้างประจำวัน
 
+## การปรับปรุง 24 ตุลาคม 2569
+
+- มือถือมีปุ่มสลับ “กรอกข้อมูล / ดูตัวอย่าง PDF” ช่องกรอกขนาด 16px และปุ่มอย่างน้อย 44px
+- แก้ไขชื่อรายการบุคลากร/เครื่องจักร ล้างรายการ และเพิ่มรายการได้ รวมถึงหัวข้อและข้อความประกอบในส่วนท้ายฟอร์ม
+- วันคงเหลือเลือกคำนวณอัตโนมัติหรือกรอกเองได้ ใช้ผลต่างวันที่ตามปฏิทิน (วันเริ่มสัญญานับเป็น 0 วันผ่านไป)
+- PDF ใช้กรอบและเส้นตารางตามไฟล์ต้นฉบับ หากข้อมูลยาวเกินพื้นที่จะต่อหน้าเพิ่มเติมโดยไม่ตัดทิ้ง ฟอนต์ใช้ Sarabun ที่แถมมา จึงอาจต่างจากฟอนต์ในต้นฉบับ
+- ประวัติค้นหาชื่อโครงการ/สถานที่/วันที่ และกรองเดือน/ปีได้ แสดงเวลาแก้ไขตามเขตเวลาไทย
+- ป้องกันกดบันทึกซ้ำ เตือนก่อนทิ้งข้อมูลที่ยังไม่บันทึก และแสดงข้อความในประวัติด้วย textContent
+- หน้าประวัติไม่มีปุ่มดาวน์โหลด JSON; ผู้ดูแลยังเรียก API /api/backup เพื่อสำรองข้อมูลได้
+- ฐานข้อมูล SQLite เดิมได้รับการสำรองเป็น report.db.before-migration-*.bak ก่อนเพิ่มคอลัมน์ ห้ามลบ report.db เพื่ออัปเกรด
+- รันด้วย app.py ที่รากโปรเจกต์ โฟลเดอร์ static/ ใช้สำหรับทรัพยากรหน้าเว็บ ไม่ใช้ static/app.py เป็นตัวเริ่มแอป
+- ยังส่งออกเฉพาะ PDF; Excel ใช้เป็นเอกสารอ้างอิงรูปแบบ
+
+### การทดสอบ
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+ชุดทดสอบใช้ฐานข้อมูลชั่วคราว ไม่แก้ไข report.db เดิม การตรวจข้อความ PDF ต้องมี PyMuPDF (ถ้าไม่มีจะข้ามเฉพาะการตรวจเนื้อหา PDF)
+การทดสอบหน้าจอใช้ Chrome แบบ headless ที่ความกว้าง 320, 390, 768 และ 1280px ไม่ใช่การทดสอบบนโทรศัพท์จริง
+
+### เก็บข้อมูลบนโฮสต์
+
+รันในเครื่องใช้ SQLite ในโฟลเดอร์โปรเจกต์ บน Railway ต้องผูก persistent volume หรือใช้ PostgreSQL
+บน Vercel ต้องกำหนด DATABASE_URL/POSTGRES_URL; ระบบจะไม่เริ่มหากยังใช้ SQLite เพื่อป้องกันการบันทึกลงพื้นที่ชั่วคราว
+การตั้งค่าฐานข้อมูลและ deploy จริงต้องทำกับบัญชีโฮสต์ที่ใช้งาน ไม่มีการ deploy อัตโนมัติจากการแก้ไขครั้งนี้
+
+
 เว็บแอป Flask สำหรับกรอกแบบฟอร์มรายงานการก่อสร้างประจำวัน โดยหน้าเว็บและไฟล์ PDF ที่สร้างออกมา
-**มีโครงสร้าง/ตาราง/หัวข้อ ตรงกับไฟล์ต้นฉบับ `template.pdf` ทุกจุด** (ขนาดหน้ากระดาษ Letter 612×792pt
-เท่าต้นฉบับ, ตำแหน่งตาราง 3 ตารางตรงตามต้นฉบับ) และทุกช่องข้อมูลแก้ไขได้ทั้งหมด
+**จัดโครงสร้างตามไฟล์ต้นฉบับ `template.pdf` และชีต “ร่างฯ”** (ขนาดหน้ากระดาษ Letter 612×792pt
+เท่าต้นฉบับ, ตำแหน่งตาราง 3 ตารางตรงตามต้นฉบับ) และรองรับแก้ไขข้อมูล ชื่อรายการ และหัวข้อเอกสาร
 
 ## โครงสร้างเอกสาร (ตรงกับ template.pdf)
 
@@ -70,7 +99,107 @@ python app.py
 
 ## หมายเหตุ
 
-- ถ้าเคยมี `report.db` จากเวอร์ชันก่อนหน้า (ที่โครงสร้างฟิลด์ต่างจากนี้) ให้ลบไฟล์นั้นทิ้งก่อนรันเวอร์ชันนี้
-  เพราะโครงสร้างฟิลด์เปลี่ยนไปให้ตรงกับ template.pdf (เช่น แยกวันที่เป็นวัน/เดือน/ปี)
-- `output/preview.pdf` จะถูกเขียนทับอัตโนมัติทุกครั้งที่มีการพรีวิว ไม่ต้องสร้างเอง
-"# Daily_Report" 
+- ถ้าเคยมี `report.db` จากเวอร์ชันก่อนหน้า (ที่โครงสร้างฟิลด์ต่างจากนี้) ห้ามลบไฟล์เดิม: ระบบปรับโครงสร้างให้อัตโนมัติและสำรอง SQLite ก่อนเพิ่มคอลัมน์
+  ระบบจะเพิ่มคอลัมน์ที่ขาดและเก็บข้อมูลเดิมไว้
+- พรีวิวสร้างในหน่วยความจำและส่งกลับโดยตรง ไม่เขียนทับไฟล์พรีวิวกลาง
+
+## Deploy ขึ้น Railway
+
+โปรเจกต์นี้พร้อม deploy ขึ้น [Railway](https://railway.com) แล้ว (มี `Procfile` + `gunicorn` ให้ครบ)
+
+### ขั้นตอน
+
+1. **พุชโค้ดขึ้น GitHub** — สร้าง repo แล้ว push โฟลเดอร์นี้ทั้งหมดขึ้นไป (`.gitignore` กันไฟล์ `report.db`/`venv` ไม่ให้ติดไปด้วยแล้ว)
+   ```bash
+   cd daily-report
+   git init
+   git add .
+   git commit -m "Initial commit"
+   git remote add origin https://github.com/<your-username>/<your-repo>.git
+   git push -u origin main
+   ```
+2. **สร้างโปรเจกต์ใน Railway** — ไปที่ [railway.com](https://railway.com) → New Project → **Deploy from GitHub repo** → เลือก repo ที่เพิ่ง push
+3. Railway จะ build ให้อัตโนมัติ (ตรวจ `requirements.txt` เจอ แล้วอ่าน `Procfile` เพื่อรู้คำสั่งสตาร์ท `gunicorn app:app`)
+4. **เพิ่ม Persistent Volume เพื่อไม่ให้ข้อมูล report.db หาย** เมื่อ deploy ใหม่ทุกครั้ง (ไม่ทำขั้นตอนนี้ = ข้อมูลหายทุกครั้งที่ deploy):
+   - ในหน้าโปรเจกต์ Railway กด **⌘K** (หรือคลิกขวาที่ canvas) → **Create Volume**
+   - ตั้ง mount path เป็น `/data`
+   - Railway จะตั้งตัวแปรแวดล้อม `RAILWAY_VOLUME_MOUNT_PATH` ให้อัตโนมัติ — โค้ดใน `app.py` อ่านค่านี้อยู่แล้ว จะเก็บ `report.db` และ `output/` ไว้ใน volume โดยอัตโนมัติ ไม่ต้องแก้อะไรเพิ่ม
+   - ถ้าเจอปัญหาเขียนไฟล์ลง volume ไม่ได้ (permission denied) ให้เพิ่มตัวแปรแวดล้อม `RAILWAY_RUN_UID=0` ในแท็บ Variables
+5. เปิดแท็บ **Settings → Networking → Generate Domain** เพื่อได้ URL สาธารณะ
+
+## Deploy ขึ้น Vercel (ต้องใช้ฐานข้อมูล PostgreSQL ภายนอกแทน SQLite)
+
+Vercel เป็น serverless — ระบบไฟล์เขียนไม่ถาวร (เขียนได้แค่ `/tmp` และหายทุกครั้งที่ instance เปลี่ยน) ดังนั้น
+**เก็บข้อมูลด้วยไฟล์ SQLite ตรงๆ ไม่ได้** โค้ดในโปรเจกต์นี้จึงรองรับสลับไปใช้ PostgreSQL อัตโนมัติเมื่อพบตัวแปร
+แวดล้อม `DATABASE_URL` (หรือ `POSTGRES_URL`) — ถ้าไม่ตั้งค่านี้ แอปจะกลับไปใช้ SQLite แบบเดิม (เหมาะกับรันในเครื่อง/Railway)
+
+ไฟล์ที่เตรียมไว้ให้แล้ว: `vercel.json` (routing + บอกให้รวมไฟล์ `templates/`, `static/`, `fonts/`, `template.pdf` เข้าไปใน
+build) และ `api/index.py` (entry point ที่ Vercel มองหา — import แอป Flask จาก `app.py` มาใช้)
+
+1. **เตรียมฐานข้อมูล PostgreSQL** เลือกอย่างใดอย่างหนึ่ง:
+   - **Vercel Postgres / Neon** — ในหน้าโปรเจกต์ Vercel ไปที่แท็บ **Storage → Create Database → Postgres**
+     ระบบจะสร้างตัวแปรแวดล้อม `POSTGRES_URL` (และตัวแปรอื่นๆ) ให้อัตโนมัติ โค้ดอ่านค่านี้ได้เลยโดยไม่ต้องตั้งเอง
+   - **Supabase / Neon (สมัครเอง) / ผู้ให้บริการ Postgres อื่นๆ** — คัดลอก connection string (ขึ้นต้นด้วย
+     `postgres://` หรือ `postgresql://`) มาตั้งเป็นตัวแปรแวดล้อมชื่อ `DATABASE_URL` ในหน้า Vercel → Settings →
+     Environment Variables
+2. **Push โค้ดขึ้น GitHub** (ตามขั้นตอนเดียวกับ Railway ด้านบน)
+3. **Import โปรเจกต์เข้า Vercel** — [vercel.com](https://vercel.com) → **Add New → Project** → เลือก repo
+   Vercel จะเจอ `vercel.json` และ build ให้อัตโนมัติ (ไม่ต้องตั้งค่า Build/Output settings เอง)
+4. ตั้งตัวแปรแวดล้อม `DATABASE_URL` (ถ้ายังไม่มีจากขั้นตอนที่ 1) ในแท็บ **Settings → Environment Variables**
+   แล้วกด **Redeploy**
+5. เปิด URL ที่ Vercel ให้มา — ครั้งแรกที่แอปรัน โค้ดจะสร้างตาราง `reports` ในฐานข้อมูลให้อัตโนมัติ (ไม่ต้องรัน
+   migration เอง)
+
+**ข้อจำกัดที่ควรรู้บน Vercel:** พรีวิว PDF (`output/preview.pdf`) จะถูกเขียนไว้ที่ `/tmp` เป็นไฟล์แคชชั่วคราวเท่านั้น
+(หายได้ตลอดเวลา) — ไม่กระทบการใช้งานเพราะพรีวิวถูกส่งกลับให้เบราว์เซอร์โดยตรงอยู่แล้ว ส่วนข้อมูลรายงานจริง (บันทึก/แก้ไข/ลบ)
+เก็บอยู่ใน PostgreSQL ทั้งหมด จึงถาวรไม่หายตอน deploy ใหม่
+
+## Deploy ขึ้น PythonAnywhere (ฟรีถาวร ไม่ต้องผูกบัตร ไม่ใช่ trial)
+
+เหมาะกับกรณีที่ไม่อยากผูกบัตรเครดิตหรือรอเครดิตทดลองหมดอายุแบบ Railway
+ใช้ [PythonAnywhere](https://www.pythonanywhere.com) แผน **Beginner** (ฟรีถาวร)
+
+### ขั้นตอน
+
+1. **สมัครบัญชี** ที่ pythonanywhere.com → เลือก **Beginner account** (ไม่ต้องใส่บัตรเครดิต)
+
+2. **อัปโหลดโค้ด** — เปิดแท็บ **Consoles** → เปิด **Bash console** ใหม่ แล้ว clone จาก GitHub
+   (หรือถ้ายังไม่ได้ push ขึ้น GitHub ใช้แท็บ **Files** อัปโหลดไฟล์ทีละไฟล์/เป็น zip แล้วแตกไฟล์ก็ได้)
+   ```bash
+   git clone https://github.com/<your-username>/<your-repo>.git daily-report
+   cd daily-report
+   ```
+
+3. **สร้าง virtualenv และติดตั้งไลบรารี** (ยังอยู่ใน Bash console เดิม)
+   ```bash
+   mkvirtualenv --python=/usr/bin/python3.10 daily-report-venv
+   pip install -r requirements.txt
+   ```
+   *(ไม่ต้องติดตั้ง gunicorn ก็ได้ เพราะ PythonAnywhere มีตัวจัดการ WSGI ของตัวเองอยู่แล้ว)*
+
+4. **สร้าง Web App** — ไปที่แท็บ **Web** → **Add a new web app** → เลือก **Manual configuration**
+   (ไม่ใช่ตัวเลือก "Flask" ในวิซาร์ด เพราะโปรเจกต์นี้มีโครงสร้างของตัวเองอยู่แล้ว) → เลือกเวอร์ชัน Python
+   ให้ตรงกับที่ตั้ง venv ไว้ (เช่น 3.10)
+
+5. **ผูก virtualenv** — ในหน้า Web app ที่สร้าง เลื่อนไปหัวข้อ **Virtualenv** ใส่ path:
+   ```
+   /home/<your-username>/.virtualenvs/daily-report-venv
+   ```
+
+6. **แก้ไฟล์ WSGI configuration** — คลิกลิงก์ไฟล์ WSGI configuration file ในหน้า Web app
+   (path ประมาณ `/var/www/<your-username>_pythonanywhere_com_wsgi.py`)
+   ลบเนื้อหาเดิมทั้งหมด แล้วคัดลอกเนื้อหาจากไฟล์ `wsgi_pythonanywhere_example.py` ในโปรเจกต์นี้ไปวางแทน
+   (อย่าลืมแก้ `yourusername` ให้เป็นชื่อผู้ใช้จริงของคุณ)
+
+7. **ตั้งค่า static files** — ในหน้า Web app เลื่อนไปหัวข้อ **Static files** เพิ่มแถวใหม่:
+   - URL: `/static/`
+   - Directory: `/home/<your-username>/daily-report/static`
+
+8. กด **Reload** ปุ่มสีเขียวด้านบนหน้า Web app แล้วเปิด URL `<your-username>.pythonanywhere.com` ได้เลย
+
+### หมายเหตุสำหรับ PythonAnywhere
+
+- ไฟล์ `report.db` และ `output/` จะถูกเก็บไว้ในโฟลเดอร์โปรเจกต์ตามปกติ (path เดียวกับตอนรันในเครื่อง)
+  เพราะ filesystem ของ PythonAnywhere เป็นแบบถาวรอยู่แล้ว ไม่ต้องตั้งค่า volume เพิ่มแบบ Railway
+- แผนฟรีได้โดเมนย่อย `<your-username>.pythonanywhere.com` เท่านั้น (ใช้โดเมนของตัวเองต้องอัปเกรดแผน)
+- ถ้าแก้โค้ดแล้วอยากอัปเดตเว็บที่ deploy ไว้: `git pull` ใน Bash console แล้วกด **Reload** ที่แท็บ Web อีกครั้ง
