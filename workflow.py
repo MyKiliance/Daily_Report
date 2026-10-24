@@ -175,7 +175,7 @@ def install(app, services):
     @app.before_request
     def restrict_static():
         if request.path.startswith('/static/') and request.path.removeprefix('/static/') not in {
-                'script.js', 'style.css', 'pdf.min.js', 'worker.min.js', 'Sarabun.ttf', 'Sarabun-Bold.ttf'}:
+                'script.js', 'thai-date.js', 'style.css', 'pdf.min.js', 'worker.min.js', 'Sarabun.ttf', 'Sarabun-Bold.ttf'}:
             abort(404)
 
     @app.route('/')

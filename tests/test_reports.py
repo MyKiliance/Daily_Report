@@ -101,7 +101,7 @@ class ReportsTest(unittest.TestCase):
 
     def test_home_and_static_assets(self):
         self.assertEqual(self.client.get('/').status_code,200)
-        for name in ('script.js','style.css','pdf.min.js','worker.min.js','Sarabun.ttf'):
+        for name in ('script.js','thai-date.js','style.css','pdf.min.js','worker.min.js','Sarabun.ttf'):
             response = self.client.get('/static/'+name)
             self.assertEqual(response.status_code,200)
             response.close()

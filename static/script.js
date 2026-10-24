@@ -102,7 +102,7 @@ function addExtra(group, label = "", count = "") {
   button.addEventListener("click", () => { row.remove(); refreshExtraPermissions(); schedulePreview(); }); row.appendChild(button); container.appendChild(row);refreshExtraPermissions();
 }
 function resetForm() {
-  form.reset(); form.querySelectorAll(".extra-row").forEach(row => row.remove());
+  form.reset(); window.contractDatePicker.reset();form.querySelectorAll(".extra-row").forEach(row => row.remove());
   workflowVersion=null;workflowStatus="draft";allowedFields=[...workflowConfig.defaultDelegate];
   setPermissions(allowedFields);
   field("reportDay").setCustomValidity(""); setEditingState(null); calcRemainingDays(); updateCaptions();
@@ -271,6 +271,7 @@ function applyWorkflow(){
   const visible={btnIssue:role==="issuer"&&["draft","review"].includes(workflowStatus),btnSubmit:role==="filler"&&workflowStatus==="open",btnComplete:role==="issuer"&&workflowStatus==="review",btnReopen:role==="issuer"&&["review","completed"].includes(workflowStatus),btnEditDraft:role==="issuer"&&["open","completed"].includes(workflowStatus),btnRotate:role==="issuer"&&!!currentReportId&&workflowStatus!=="draft",btnRevoke:role==="issuer"&&!!currentReportId,btnReloadDocument:!!currentReportId,btnEvents:role==="issuer"&&!!currentReportId};
   for(const [id,show] of Object.entries(visible))document.getElementById(id).hidden=!show;
   if(role==="filler"){form.querySelector("details").hidden=true;document.getElementById("formHelp").textContent=workflowStatus==="open" ? "กรอกเฉพาะช่องที่เปิดไว้ บันทึกระหว่างทำได้ เมื่อพร้อมให้กดส่งกลับตรวจ" : "เอกสารปิดรับการกรอกแล้ว สามารถดูตัวอย่างและดาวน์โหลดได้";}
+  window.contractDatePicker.sync();
   calcRemainingDays();
 }
 async function workflowAction(action){

@@ -50,3 +50,15 @@ input:disabled,select:disabled,textarea:disabled{opacity:1;color:#5d6572;backgro
  .personnel-row{grid-template-columns:minmax(0,1fr);padding:12px}
  .personnel-row button{width:100%;justify-self:stretch}
 }
+
+.thai-date-field{display:flex;gap:8px;align-items:center}.thai-date-field input{flex:1;min-width:0}.thai-date-field button{flex:none}
+.field small{font-size:13px;color:#56627a;font-weight:400}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.thai-calendar{width:370px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);padding:16px;border:1px solid var(--border);border-radius:12px;color:var(--ink);font:inherit;overflow:auto}
+.thai-calendar::backdrop{background:#17233580}.thai-calendar header{display:flex;align-items:center;justify-content:space-between;gap:8px}.thai-calendar h2{font-size:18px;margin:0}
+.calendar-navigation{display:grid;grid-template-columns:36px minmax(0,1.3fr) minmax(0,1fr) 36px;gap:6px;align-items:center;margin:14px 0 10px}
+.calendar-navigation select{font-size:14px;padding:6px 3px}.calendar-navigation button{padding:0;font-size:24px}
+.calendar-weekdays,.calendar-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;text-align:center}.calendar-weekdays{font-size:13px;color:#56627a;padding:6px 0}
+.calendar-days button{padding:0;width:100%;min-width:0;background:#fff;border:1px solid transparent;color:var(--ink);font-size:15px}.calendar-days button:hover{background:#f4e4e7}.calendar-days button[aria-pressed=true]{background:var(--accent);color:#fff}.calendar-days .calendar-today{border-color:var(--accent)}
+.thai-calendar footer{display:flex;justify-content:space-between;gap:8px;margin-top:14px}
+@media(max-width:380px){.thai-calendar{padding:10px}.thai-date-field{gap:6px}.thai-date-field button{padding:9px}}
