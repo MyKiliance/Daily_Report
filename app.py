@@ -1,30 +1,69 @@
 # -*- coding: utf-8 -*-
 """
 daily-report - รายงานการก่อสร้างประจำวัน
-Flask app: บันทึกข้อมูลรายงานประจำวันลง SQLite, พรีวิว PDF ในเบราว์เซอร์ด้วย pdf.js,
-และส่งออกเป็นไฟล์ PDF ที่มีโครงสร้าง/ตาราง ตรงกับไฟล์ต้นฉบับ template.pdf
+Flask app: บันทึกข้อมูลรายงานประจำวันลง SQLite หรือ PostgreSQL (แล้วแต่สภาพแวดล้อม),
+พรีวิว PDF ในเบราว์เซอร์ด้วย pdf.js, และส่งออกเป็นไฟล์ PDF ที่มีโครงสร้าง/ตาราง ตรงกับไฟล์ต้นฉบับ template.pdf
+
+โหมดฐานข้อมูล:
+- ถ้ามีตัวแปรแวดล้อม DATABASE_URL หรือ POSTGRES_URL (เช่นตอน deploy บน Vercel + Vercel Postgres/Neon/Supabase)
+  แอปจะต่อ PostgreSQL แทน เพราะ Vercel เป็น serverless ไฟล์ระบบเขียนไม่ถาวร ใช้ SQLite ไฟล์เก็บข้อมูลจริงไม่ได้
+- ถ้าไม่มีตัวแปรนี้ (รันในเครื่อง หรือ deploy บน Railway ที่มี persistent disk) จะใช้ SQLite ไฟล์ตามเดิม
 """
 import os
 import io
 import re
-import sqlite3
 import datetime
+import json
+import unicodedata
+from report_schema import LABELS, GROUPS, EXTRA_FIELDS, label_key
+from pdf_renderer import render_report
 
 from flask import Flask, request, jsonify, render_template, send_file, g, abort
 
-from reportlab.lib.pagesizes import LETTER
-from reportlab.lib.units import mm
-from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "report.db")
+
+# ---------------------------------------------------------------------------
+# เลือกโหมดฐานข้อมูล: PostgreSQL (ถ้ามี DATABASE_URL/POSTGRES_URL) หรือ SQLite (ค่าเริ่มต้น)
+# ---------------------------------------------------------------------------
+DATABASE_URL = (
+    os.environ.get("DATABASE_URL")
+    or os.environ.get("POSTGRES_URL")
+    or os.environ.get("POSTGRES_PRISMA_URL")
+)
+USE_POSTGRES = bool(DATABASE_URL)
+
+if USE_POSTGRES:
+    import psycopg2
+    import psycopg2.extras
+    # Vercel Postgres/Neon บางครั้งให้ URL แบบ "postgres://" ซึ่ง psycopg2 รับได้อยู่แล้ว ไม่ต้องแปลง
+else:
+    import sqlite3
+
+# บน Vercel ระบบไฟล์อ่านได้อย่างเดียว ยกเว้นโฟลเดอร์ /tmp (และข้อมูลใน /tmp ก็ไม่ถาวรข้าม request)
+# ตัวแปร VERCEL ถูกตั้งค่าอัตโนมัติโดย Vercel เสมอตอนรันจริง
+ON_VERCEL = bool(os.environ.get("VERCEL"))
+
+# ถ้ามีการต่อ Railway Volume ไว้ Railway จะตั้งค่า RAILWAY_VOLUME_MOUNT_PATH ให้อัตโนมัติ
+# ใช้โฟลเดอร์นั้นเก็บ report.db (โหมด SQLite) และ output/ เพื่อให้ข้อมูลไม่หายตอน redeploy
+# บน Vercel ใช้ /tmp เพราะเป็นที่เดียวที่เขียนได้ (ใช้เก็บแค่ไฟล์พรีวิวชั่วคราว ไม่ใช่ที่เก็บข้อมูลหลัก)
+# ถ้ารันในเครื่องตัวเอง (ไม่มีตัวแปรเหล่านี้) จะใช้โฟลเดอร์โปรเจกต์ตามปกติ
+if ON_VERCEL:
+    DATA_DIR = "/tmp"
+else:
+    DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", BASE_DIR)
+
+DB_PATH = os.path.join(DATA_DIR, "report.db")  # ใช้เฉพาะโหมด SQLite
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 PREVIEW_PDF_PATH = os.path.join(OUTPUT_DIR, "preview.pdf")
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+try:
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+except OSError:
+    pass  # เผื่อกรณีระบบไฟล์อ่านได้อย่างเดียว การพรีวิวยังทำงานได้โดยไม่ต้องเขียนไฟล์แคช
 
 
 def _pick_font(preferred_name, fallback_name):
@@ -40,6 +79,7 @@ FONT_REGULAR = _pick_font("THSarabunNew.ttf", "Sarabun.ttf")
 FONT_BOLD = _pick_font("THSarabunNew-Bold.ttf", "Sarabun-Bold.ttf")
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 
 THAI_MONTHS = [
     "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -55,7 +95,7 @@ FIELDS = [
     "projectTitle", "projectSubtitle", "projectAddress", "contractLine",
     # วันที่ (แยกเป็น วัน/เดือน/พ.ศ. ตรงตามต้นฉบับ)
     "reportDay", "reportMonth", "reportYear",
-    "totalDays", "remainingDays", "dueDate",
+    "totalDays", "remainingDays", "dueDate", "contractStartDate",
     # สภาพอากาศ
     "weatherAM", "weatherPM",
     # จำนวนรวม (บรรทัดหัวตาราง)
@@ -82,40 +122,33 @@ DEFAULTS = {
     "contractLine": "สัญญาจ้างเลขที่ 7/2569 ลงวันที่ 5 พฤษภาคม 2569",
     "totalDays": "120",
     "dueDate": "2 กันยายน 2569",
+    "contractStartDate": "2026-05-05",  # ตรงกับ "ลงวันที่ 5 พฤษภาคม 2569" ใน contractLine (พ.ศ. 2569 = ค.ศ. 2026)
     "supervisorName": "นายจรูญ เกื้อชู",
     "contractorRepName": "บริษัท อินเตอร์เทค อิเลคทริคแอด์บิ้ลด์ จำกัด",
 }
 
-# ป้ายชื่อคงที่ในตารางกลุ่มที่ 1/2/3 (ต้องตรงกับ template.pdf)
-GROUP1_ROWS = [  # จำนวนเจ้าหน้าที่ของผู้รับจ้าง (7 แถว)
-    ("staff_office", "เจ้าหน้าที่ประจำสำนักงาน"),
-    ("staff_supervisor", "นายช่างคุมงาน"),
-    ("staff_carpenter", "ช่างไม้"),
-    ("staff_steel", "ช่างเหล็ก"),
-    ("staff_mason", "ช่างปูน"),
-    ("staff_labourer", "กรรมกร"),
-    ("staff_painter", "ช่างทาสี"),
-]
-GROUP2_ROWS = [  # จำนวนเครื่องจักรของผู้รับจ้าง (4 แถว + แถวว่าง)
-    ("eq_excavator", "รถขุด"),
-    ("eq_sixwheel", "รถหกล้อ"),
-    ("eq_crane", "Mobile Crane"),
-    (None, None),  # แถวนี้ใช้ eq_other_label / eq_other_count แทน (ป้ายแก้ไขได้)
-]
-GROUP3_ROWS = [  # ต่อจากตารางเครื่องจักร (2 แถว)
-    ("eq_roofframe", "ช่างโครงหลังคาเหล็ก"),
-    ("staff_electrician", "ช่างไฟฟ้า"),
-]
-TABLE1_ROW_COUNT = 7  # จำนวนแถวทั้งหมดของตาราง (เท่ากับกลุ่มที่ยาวที่สุด)
+FIELDS += EXTRA_FIELDS
+DEFAULTS.update(LABELS)
+DEFAULTS.update({label_key(k): title for group in GROUPS for k, title in group})
+DEFAULTS.update(extraRows="[]", remainingMode="auto")
+
 
 
 # ---------------------------------------------------------------------------
 # Database helpers
+# รองรับทั้ง SQLite (ค่าเริ่มต้น/local/Railway) และ PostgreSQL (เช่นตอน deploy บน Vercel)
+# PH = ตัวคั่นพารามิเตอร์ใน SQL ("?" สำหรับ SQLite, "%s" สำหรับ PostgreSQL)
 # ---------------------------------------------------------------------------
+PH = "%s" if USE_POSTGRES else "?"
+
+
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
+        if USE_POSTGRES:
+            g.db = psycopg2.connect(DATABASE_URL)
+        else:
+            g.db = sqlite3.connect(DB_PATH)
+            g.db.row_factory = sqlite3.Row
     return g.db
 
 
@@ -126,20 +159,114 @@ def close_db(exception=None):
         db.close()
 
 
+def canonical_row(row):
+    values = dict(row)
+    names = {field.lower(): field for field in FIELDS}
+    return {names.get(key, key): value for key, value in values.items()}
+
+
+def db_query(db, sql, params=()):
+    """รันคำสั่ง SQL แล้วคืน cursor เดียวกันไม่ว่าจะใช้ฐานข้อมูลแบบไหน
+    (แถวที่ได้จะเข้าถึงเหมือน dict ได้ทั้งคู่ผ่าน dict(row))"""
+    if USE_POSTGRES:
+        cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    else:
+        cur = db.cursor()
+    cur.execute(sql, params)
+    return cur
+
+
 def init_db():
-    db = sqlite3.connect(DB_PATH)
-    columns_sql = ", ".join(f"{f} TEXT" for f in FIELDS)
-    db.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TEXT NOT NULL,
-            {columns_sql}
-        )
-        """
-    )
-    db.commit()
-    db.close()
+    if ON_VERCEL and not USE_POSTGRES:
+        raise RuntimeError("Vercel requires DATABASE_URL for persistent report storage")
+    db = psycopg2.connect(DATABASE_URL) if USE_POSTGRES else sqlite3.connect(DB_PATH)
+    try:
+        cur = db.cursor()
+        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'reports'" if USE_POSTGRES else "PRAGMA table_info(reports)")
+        existing = {row[0] if USE_POSTGRES else row[1] for row in cur.fetchall()}
+        missing = [field for field in FIELDS if field.lower() not in {x.lower() for x in existing}]
+        if existing and missing and not USE_POSTGRES:
+            backup = sqlite3.connect(DB_PATH + '.before-migration-' + datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '.bak')
+            db.backup(backup)
+            backup.close()
+        primary = 'SERIAL PRIMARY KEY' if USE_POSTGRES else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+        columns = ', '.join(f'{field} TEXT' for field in FIELDS)
+        cur.execute(f'CREATE TABLE IF NOT EXISTS reports (id {primary}, created_at TEXT NOT NULL, {columns})')
+        if existing:
+            for field in missing:
+                cur.execute(f'ALTER TABLE reports ADD COLUMN {"IF NOT EXISTS " if USE_POSTGRES else ""}{field} TEXT')
+        db.commit()
+    finally:
+        db.close()
+
+
+def now_bangkok():
+    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=7))).isoformat(timespec='seconds')
+
+
+@app.errorhandler(400)
+def bad_request(error):
+    return jsonify(error=error.description), 400
+
+
+def report_data(require_date=False, existing=None):
+    raw = request.get_json(silent=True)
+    if not isinstance(raw, dict):
+        abort(400, description='ข้อมูลต้องเป็น JSON object')
+    data = {**DEFAULTS, **{k: v for k, v in (existing or {}).items() if v is not None}}
+    for key in FIELDS:
+        if key == 'updated_at':
+            continue
+        if key in raw:
+            if not isinstance(raw[key], (str, int, float)) or isinstance(raw[key], bool):
+                abort(400, description='ชนิดข้อมูลไม่ถูกต้อง: '+key)
+            data[key] = str(raw[key])
+        if len(str(data.get(key) or '')) > 30000:
+            abort(400, description='ข้อมูลยาวเกินกำหนด: '+key)
+    for key in LABELS:
+        if len(data.get(key, '')) > 120:
+            abort(400, description='หัวข้อยาวเกิน 120 ตัวอักษร: '+key)
+    numeric = [k for group in GROUPS for k, _ in group] + ['totalDays', 'totalStaffCount', 'totalEquipmentCount']
+    for key in numeric + ['remainingDays']:
+        val = str(data.get(key) or '')
+        if val and (not re.fullmatch(r'-?\d{1,7}', val) or (key != 'remainingDays' and int(val)<0)):
+            abort(400, description='จำนวนต้องเป็นจำนวนเต็มที่ถูกต้อง: '+key)
+    date = [data.get(k) for k in ['reportDay','reportMonth','reportYear']]
+    if require_date or all(date):
+        try:
+            report_date = datetime.date(int(date[2])-543, THAI_MONTHS.index(date[1])+1, int(date[0]))
+        except (ValueError, TypeError):
+            abort(400, description='กรุณาระบุวันที่รายงานให้ถูกต้องครบวัน เดือน และ พ.ศ.')
+    else:
+        report_date = None
+    start = data.get('contractStartDate')
+    try:
+        start_date = datetime.date.fromisoformat(start) if start else None
+    except ValueError:
+        abort(400, description='วันที่เริ่มสัญญาไม่ถูกต้อง')
+    if data.get('remainingMode') not in ('auto','manual'):
+        abort(400, description='โหมดวันคงเหลือไม่ถูกต้อง')
+    if data.get('remainingMode') == 'auto':
+        data['remainingDays'] = str(int(data['totalDays'])-(report_date-start_date).days) if report_date and start_date and data.get('totalDays') else ''
+    for key in ['weatherAM','weatherPM']:
+        if data.get(key, '') not in ('','แจ่มใส','ฝนตก','ฝนตกหนัก'):
+            abort(400, description='สภาพอากาศไม่ถูกต้อง')
+    try:
+        extra = json.loads(data.get('extraRows') or '[]')
+        if not isinstance(extra,list) or len(extra)>100:
+            raise ValueError()
+        for row in extra:
+            if not isinstance(row,dict) or type(row.get('group')) is not int or row['group'] not in range(3):
+                raise ValueError()
+            if not isinstance(row.get('label'),str) or len(row['label'])>300:
+                raise ValueError()
+            if not isinstance(row.get('count'),str) or (row['count'] and not re.fullmatch(r'\d{1,7}',row['count'])):
+                raise ValueError()
+        data['extraRows'] = json.dumps(extra,ensure_ascii=False)
+    except (ValueError,TypeError,KeyError):
+        abort(400,description='รายการเพิ่มเติมไม่ถูกต้อง (สูงสุด 100 รายการ)')
+    data['updated_at'] = now_bangkok()
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +274,7 @@ def init_db():
 # ---------------------------------------------------------------------------
 @app.route("/")
 def index():
-    return render_template("index.html", defaults=DEFAULTS, months=THAI_MONTHS)
+    return render_template("index.html", defaults=DEFAULTS, months=THAI_MONTHS, labels=LABELS, groups=GROUPS, label_key=label_key)
 
 
 # ---------------------------------------------------------------------------
@@ -156,43 +283,81 @@ def index():
 @app.route("/api/reports", methods=["GET"])
 def list_reports():
     db = get_db()
-    rows = db.execute(
-        "SELECT id, created_at, reportDay, reportMonth, reportYear, workLocation "
-        "FROM reports ORDER BY id DESC"
-    ).fetchall()
-    return jsonify([dict(r) for r in rows])
+    cur = db_query(
+        db,
+        "SELECT id, created_at, updated_at, reportDay, reportMonth, reportYear, projectTitle, workLocation "
+        "FROM reports ORDER BY id DESC",
+    )
+    rows = cur.fetchall()
+    return jsonify([canonical_row(r) for r in rows])
 
 
 @app.route("/api/reports/<int:report_id>", methods=["GET"])
 def get_report(report_id):
     db = get_db()
-    row = db.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+    cur = db_query(db, f"SELECT * FROM reports WHERE id = {PH}", (report_id,))
+    row = cur.fetchone()
     if row is None:
         abort(404, description="ไม่พบรายงานนี้")
-    return jsonify(dict(row))
+    return jsonify(canonical_row(row))
 
 
 @app.route("/api/reports", methods=["POST"])
 def create_report():
-    data = request.get_json(silent=True) or {}
+    data = report_data(require_date=True)
     values = [str(data.get(f, "") or "") for f in FIELDS]
-    created_at = datetime.datetime.now().isoformat(timespec="seconds")
+    created_at = now_bangkok()
 
     db = get_db()
-    placeholders = ", ".join("?" for _ in FIELDS)
+    placeholders = ", ".join(PH for _ in FIELDS)
     cols = ", ".join(FIELDS)
-    cur = db.execute(
-        f"INSERT INTO reports (created_at, {cols}) VALUES (?, {placeholders})",
-        [created_at] + values,
+
+    if USE_POSTGRES:
+        cur = db_query(
+            db,
+            f"INSERT INTO reports (created_at, {cols}) VALUES ({PH}, {placeholders}) RETURNING id",
+            [created_at] + values,
+        )
+        new_id = cur.fetchone()["id"]
+    else:
+        cur = db_query(
+            db,
+            f"INSERT INTO reports (created_at, {cols}) VALUES ({PH}, {placeholders})",
+            [created_at] + values,
+        )
+        new_id = cur.lastrowid
+
+    db.commit()
+    return jsonify({"id": new_id, "created_at": created_at}), 201
+
+
+@app.route("/api/reports/<int:report_id>", methods=["PUT"])
+def update_report(report_id):
+    """แก้ไขรายงานที่บันทึกไว้แล้ว (อัปเดตข้อมูลทับของเดิม แทนการสร้างรายการใหม่)"""
+    db = get_db()
+    existing = db_query(db, f"SELECT * FROM reports WHERE id = {PH}", (report_id,)).fetchone()
+    if existing is None:
+        abort(404, description="ไม่พบรายงานนี้")
+
+    data = report_data(require_date=True, existing=canonical_row(existing))
+    values = [str(data.get(f, "") or "") for f in FIELDS]
+
+    assignments = ", ".join(f"{f} = {PH}" for f in FIELDS)
+    db_query(
+        db,
+        f"UPDATE reports SET {assignments} WHERE id = {PH}",
+        values + [report_id],
     )
     db.commit()
-    return jsonify({"id": cur.lastrowid, "created_at": created_at}), 201
+    return jsonify({"id": report_id, "updated": True})
 
 
 @app.route("/api/reports/<int:report_id>", methods=["DELETE"])
 def delete_report(report_id):
     db = get_db()
-    db.execute("DELETE FROM reports WHERE id = ?", (report_id,))
+    deleted = db_query(db, f"DELETE FROM reports WHERE id = {PH}", (report_id,))
+    if not deleted.rowcount:
+        abort(404, description="ไม่พบรายงานนี้")
     db.commit()
     return jsonify({"deleted": report_id})
 
@@ -200,13 +365,14 @@ def delete_report(report_id):
 @app.route("/api/reports/<int:report_id>/pdf", methods=["GET"])
 def export_pdf(report_id):
     db = get_db()
-    row = db.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+    row = db_query(db, f"SELECT * FROM reports WHERE id = {PH}", (report_id,)).fetchone()
     if row is None:
         abort(404, description="ไม่พบรายงานนี้")
 
-    pdf_bytes = build_pdf(dict(row))
+    row = canonical_row(row)
+    pdf_bytes = build_pdf(row)
     date_part = "-".join(
-        str(row[k] or "") for k in ("reportYear", "reportMonth", "reportDay")
+        str(row.get(k) or "") for k in ("reportYear", "reportMonth", "reportDay")
     ).strip("-") or str(row["id"])
     filename = f"daily-report-{date_part}.pdf"
     return send_file(
@@ -221,16 +387,10 @@ def export_pdf(report_id):
 def preview_pdf():
     """
     สร้าง PDF จากข้อมูลในฟอร์มปัจจุบัน (ยังไม่ได้บันทึก) เพื่อดูตัวอย่างในเบราว์เซอร์ด้วย pdf.js
-    ไฟล์ล่าสุดจะถูกเขียนทับไว้ที่ output/preview.pdf ด้วย
+    สร้างและส่งกลับในหน่วยความจำ เพื่อไม่ให้พรีวิวของผู้ใช้เขียนทับกัน
     """
-    data = request.get_json(silent=True) or {}
+    data = report_data()
     pdf_bytes = build_pdf(data)
-
-    try:
-        with open(PREVIEW_PDF_PATH, "wb") as f:
-            f.write(pdf_bytes)
-    except OSError:
-        pass  # การพรีวิวยังทำงานได้แม้เขียนไฟล์ลงดิสก์ไม่สำเร็จ
 
     return send_file(
         io.BytesIO(pdf_bytes),
@@ -270,7 +430,12 @@ def wrap_text(text, font, size, max_width):
         return [""]
     lines = []
     for raw_line in str(text).split("\n"):
-        tokens = _TOKEN_RE.findall(raw_line)
+        tokens = []
+        for token in _TOKEN_RE.findall(raw_line):
+            if tokens and (unicodedata.category(token[0]).startswith('M') or token == '\u0e33'):
+                tokens[-1] += token
+            else:
+                tokens.append(token)
         current = ""
         for tok in tokens:
             trial = current + tok
@@ -298,211 +463,23 @@ def wrap_text(text, font, size, max_width):
 
 
 def build_pdf(data: dict) -> bytes:
-    register_fonts()
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=LETTER)
-    width, height = LETTER  # 612 x 792 pt เท่ากับ template.pdf ต้นฉบับ
+    return render_report(data, DEFAULTS, register_fonts, wrap_text)
 
-    # กรอบเนื้อหา (ตรงกับ x=82..535 ของต้นฉบับ)
-    x0 = 82
-    x1 = 535
 
-    def g(key, default=""):
-        return data.get(key) or default
-
-    def text(x, y, s, font="Sarabun", size=11, align="left"):
-        c.setFont(font, size)
-        s = s if s is not None else ""
-        if align == "left":
-            c.drawString(x, y, s)
-        elif align == "center":
-            c.drawCentredString(x, y, s)
-        elif align == "right":
-            c.drawRightString(x, y, s)
-
-    def checkbox(x, y, checked, size=9):
-        c.rect(x, y, size, size)
-        if checked:
-            c.setLineWidth(1.1)
-            c.line(x, y, x + size, y + size)
-            c.line(x, y + size, x + size, y)
-            c.setLineWidth(0.6)
-
-    # ===================== หัวเอกสาร (ไม่มีกรอบ เหมือนต้นฉบับ) =====================
-    text(width / 2, 760, g("projectTitle", DEFAULTS["projectTitle"]), font="Sarabun-Bold", size=15.5, align="center")
-    text(width / 2, 742, g("projectSubtitle", DEFAULTS["projectSubtitle"]), size=11, align="center")
-    text(width / 2, 724, g("projectAddress", DEFAULTS["projectAddress"]), size=11, align="center")
-    text(width / 2, 706, g("contractLine", DEFAULTS["contractLine"]), size=11, align="center")
-
-    # จำนวนวันทำงาน / เหลือ
-    text(x0, 687,
-         f"จำนวนวันทำงาน {g('totalDays', DEFAULTS['totalDays'])} วัน.   เหลือ {g('remainingDays', '.......')} วัน.",
-         size=11)
-
-    # วันที่ / เดือน / พ.ศ.
-    text(x0, 669,
-         f"วันที่ {g('reportDay', '....')}   เดือน {g('reportMonth', '....................')}   พ.ศ. {g('reportYear', '.......')}",
-         size=11)
-
-    # สภาพอากาศ
-    text(x0, 651, "สภาพอากาศ", font="Sarabun-Bold", size=11)
-    weather_opts = ["แจ่มใส", "ฝนตก", "ฝนตกหนัก"]
-    text(x0 + 62, 651, "เช้า", size=10.5)
-    cx = x0 + 90
-    for opt in weather_opts:
-        checkbox(cx, 646.5, g("weatherAM") == opt)
-        text(cx + 13, 651, opt, size=10.5)
-        cx += 78
-    text(x0 + 62, 633, "บ่าย", size=10.5)
-    cx = x0 + 90
-    for opt in weather_opts:
-        checkbox(cx, 628.5, g("weatherPM") == opt)
-        text(cx + 13, 633, opt, size=10.5)
-        cx += 78
-
-    # จำนวนรวม เจ้าหน้าที่ / เครื่องจักร (บรรทัดเหนือตาราง 1)
-    total_y = 615
-    text(x0, total_y, "จำนวนเจ้าหน้าที่ของผู้รับจ้าง", font="Sarabun-Bold", size=10.5)
-    text(x0 + 148, total_y, f"{g('totalStaffCount', '.......')} คน", size=10.5)
-    text(x0 + 253, total_y, "จำนวนเครื่องจักรของผู้รับจ้าง", font="Sarabun-Bold", size=10.5)
-    text(x0 + 405, total_y, f"{g('totalEquipmentCount', '.......')} คน", size=10.5)
-
-    # ===================== ตาราง 1: เจ้าหน้าที่ / เครื่องจักร (3 คู่คอลัมน์ x 7 แถว) =====================
-    t1_top = total_y - 9
-    header_h = 18
-    row_h = 18.3
-    t1_bottom = t1_top - header_h - TABLE1_ROW_COUNT * row_h
-
-    col_edges = [x0, 184, 228, 316, 360, 491, x1]
-    group_defs = [
-        (col_edges[0], col_edges[1], col_edges[2], GROUP1_ROWS),
-        (col_edges[2], col_edges[3], col_edges[4], GROUP2_ROWS),
-        (col_edges[4], col_edges[5], col_edges[6], GROUP3_ROWS),
-    ]
-
-    c.setLineWidth(1)
-    c.rect(x0, t1_bottom, x1 - x0, t1_top - t1_bottom)
-    c.setLineWidth(0.5)
-    for x in col_edges[1:-1]:
-        c.line(x, t1_bottom, x, t1_top)
-    c.line(x0, t1_top - header_h, x1, t1_top - header_h)
-    for i in range(1, TABLE1_ROW_COUNT):
-        ry = t1_top - header_h - i * row_h
-        c.line(x0, ry, x1, ry)
-
-    header_y = t1_top - header_h + 5.5
-    for label_x, count_x, col_end, _rows in group_defs:
-        text((label_x + count_x) / 2, header_y, "ประเภท", font="Sarabun-Bold", size=10, align="center")
-        text((count_x + col_end) / 2, header_y, "คน", font="Sarabun-Bold", size=10, align="center")
-
-    for row_i in range(TABLE1_ROW_COUNT):
-        ry = t1_top - header_h - row_i * row_h - row_h + 6
-        for label_x, count_x, col_end, rows in group_defs:
-            if row_i < len(rows):
-                key, fixed_label = rows[row_i]
-                if key is None:
-                    label_val = g("eq_other_label", "อื่นๆ")
-                    count_val = g("eq_other_count", "")
-                    text(label_x + 4, ry, label_val, size=9.5)
-                    text((count_x + col_end) / 2, ry, count_val, size=9.5, align="center")
-                else:
-                    text(label_x + 4, ry, fixed_label, size=9.5)
-                    count_val = g(key, "")
-                    text((count_x + col_end) / 2, ry, count_val, size=9.5, align="center")
-
-    # ===================== ตาราง 2: รายละเอียดงาน (3 คอลัมน์) =====================
-    t2_top = t1_bottom - 12
-    col2_edges = [x0, 184, 272.6, x1]
-    header2_h = 33
-    body2_h = 130
-    t2_bottom = t2_top - header2_h - body2_h
-
-    c.setLineWidth(1)
-    c.rect(x0, t2_bottom, x1 - x0, t2_top - t2_bottom)
-    c.setLineWidth(0.5)
-    c.line(col2_edges[1], t2_top - header2_h, col2_edges[1], t2_bottom)
-    c.line(col2_edges[2], t2_top, col2_edges[2], t2_bottom)
-    c.line(x0, t2_top - 15.5, col2_edges[2], t2_top - 15.5)
-    c.line(x0, t2_top - header2_h, x1, t2_top - header2_h)
-
-    text((x0 + col2_edges[2]) / 2, t2_top - 11, "รายละเอียดของงานที่ผู้รับจ้างปฏิบัติงาน",
-         font="Sarabun-Bold", size=10.5, align="center")
-    text((col2_edges[2] + x1) / 2, t2_top - 20, "ปริมาณงานที่ทำได้", font="Sarabun-Bold", size=10.5, align="center")
-    text((col2_edges[2] + x1) / 2, t2_top - 30, "(ถ้ามี เช่น จำนวน เมตร ตร.ม. งานแล้วเสร็จกี่ %)", size=8.5, align="center")
-
-    text((x0 + col2_edges[1]) / 2, t2_top - 25, "งานที่ดำเนินการ", font="Sarabun-Bold", size=10, align="center")
-    text((x0 + col2_edges[1]) / 2, t2_top - 33, "(ทำอะไรบ้าง)", size=9, align="center")
-    text((col2_edges[1] + col2_edges[2]) / 2, t2_top - 29, "ตำแหน่งที่ดำเนินการ", font="Sarabun-Bold", size=10, align="center")
-
-    body_top = t2_top - header2_h - 12
-    for line in wrap_text(g("workDone"), "Sarabun", 9.5, col2_edges[1] - x0 - 8):
-        text(x0 + 4, body_top, line, size=9.5)
-        body_top -= 12
-    body_top2 = t2_top - header2_h - 12
-    for line in wrap_text(g("workLocation"), "Sarabun", 9.5, col2_edges[2] - col2_edges[1] - 8):
-        text(col2_edges[1] + 4, body_top2, line, size=9.5)
-        body_top2 -= 12
-    body_top3 = t2_top - header2_h - 12
-    for line in wrap_text(g("workQuantity"), "Sarabun", 9.5, x1 - col2_edges[2] - 8):
-        text(col2_edges[2] + 4, body_top3, line, size=9.5)
-        body_top3 -= 12
-
-    # ===================== ตาราง 3: ปัญหา / แนวทางแก้ไข (2 คอลัมน์) =====================
-    t3_top = t2_bottom - 22
-    t3_body_h = 70
-    t3_bottom = t3_top - t3_body_h
-    mid3 = (x0 + x1) / 2
-
-    text((x0 + mid3) / 2, t3_top + 10, "ปัญหา / อุปสรรค", font="Sarabun-Bold", size=10.5, align="center")
-    text((mid3 + x1) / 2, t3_top + 10, "แนวทางการแก้ไข", font="Sarabun-Bold", size=10.5, align="center")
-
-    c.setLineWidth(1)
-    c.rect(x0, t3_bottom, x1 - x0, t3_top - t3_bottom)
-    c.setLineWidth(0.5)
-    c.line(mid3, t3_top, mid3, t3_bottom)
-    row3_h = t3_body_h / 3
-    for i in range(1, 3):
-        ry = t3_top - i * row3_h
-        c.line(x0, ry, x1, ry)
-
-    py = t3_top - 12
-    for line in wrap_text(g("problems"), "Sarabun", 9.5, mid3 - x0 - 8):
-        text(x0 + 4, py, line, size=9.5)
-        py -= 12
-    sy = t3_top - 12
-    for line in wrap_text(g("solutions"), "Sarabun", 9.5, x1 - mid3 - 8):
-        text(mid3 + 4, sy, line, size=9.5)
-        sy -= 12
-
-    # ===================== ลายเซ็น (ไม่มีกรอบ) =====================
-    sig_y = t3_bottom - 45
-    c.setLineWidth(0.7)
-    c.line(x0 + 45, sig_y, mid3 - 25, sig_y)
-    text((x0 + 45 + mid3 - 25) / 2, sig_y - 14, f"({g('supervisorName', DEFAULTS['supervisorName'])})", size=10.5, align="center")
-    text((x0 + 45 + mid3 - 25) / 2, sig_y - 28, "ผู้ควบคุมงาน", size=10.5, align="center")
-
-    c.line(mid3 + 25, sig_y, x1 - 30, sig_y)
-    text((mid3 + 25 + x1 - 30) / 2, sig_y - 14, f"{g('contractorRepName', DEFAULTS['contractorRepName'])}", size=10.5, align="center")
-    text((mid3 + 25 + x1 - 30) / 2, sig_y - 28, "ผู้รับจ้าง/ตัวแทนผู้รับจ้าง", size=10.5, align="center")
-
-    # ===================== หมายเหตุ =====================
-    note_y = max(sig_y - 46, 40)
-    c.setFont("Sarabun-Bold", 9.5)
-    c.drawString(x0, note_y, "หมายเหตุ")
-    underline_w = pdfmetrics.stringWidth("หมายเหตุ", "Sarabun-Bold", 9.5)
-    c.setLineWidth(0.6)
-    c.line(x0, note_y - 1.5, x0 + underline_w, note_y - 1.5)
-    text(x0 + underline_w + 4, note_y, f"ครบกำหนดส่งมอบภายใน {g('dueDate', DEFAULTS['dueDate'])}", size=9.5)
-
-    c.showPage()
-    c.save()
-    buf.seek(0)
-    return buf.read()
+@app.route('/api/backup', methods=['GET'])
+def backup_reports():
+    rows = [canonical_row(row) for row in db_query(get_db(), 'SELECT * FROM reports ORDER BY id').fetchall()]
+    payload = json.dumps({'version': 1, 'exported_at': now_bangkok(), 'reports': rows}, ensure_ascii=False, indent=2)
+    return send_file(io.BytesIO(payload.encode('utf-8')), mimetype='application/json', as_attachment=True,
+                     download_name='reports-backup-'+now_bangkok()[:10]+'.json')
 
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     init_db()
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    # debug=True เฉพาะตอนไม่มีตัวแปร PORT จาก Railway/host อื่น (รันในเครื่องตัวเอง)
+    debug_mode = "PORT" not in os.environ
+    app.run(debug=debug_mode, host="0.0.0.0", port=port)
 else:
     init_db()
