@@ -62,3 +62,8 @@ input:disabled,select:disabled,textarea:disabled{opacity:1;color:#5d6572;backgro
 .calendar-days button{padding:0;width:100%;min-width:0;background:#fff;border:1px solid transparent;color:var(--ink);font-size:15px}.calendar-days button:hover{background:#f4e4e7}.calendar-days button[aria-pressed=true]{background:var(--accent);color:#fff}.calendar-days .calendar-today{border-color:var(--accent)}
 .thai-calendar footer{display:flex;justify-content:space-between;gap:8px;margin-top:14px}
 @media(max-width:380px){.thai-calendar{padding:10px}.thai-date-field{gap:6px}.thai-date-field button{padding:9px}}
+
+.submission-panel{margin-top:24px;padding-top:20px;border-top:1px solid var(--border);text-align:right}
+.submission-panel p{text-align:left;font-size:14px;color:#56627a;margin:0 0 12px}
+.submission-panel button{min-width:220px}
+@media(max-width:700px){.submission-panel button{width:100%;min-width:0}}

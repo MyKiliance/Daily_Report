@@ -115,7 +115,7 @@ function resetForm() {
   document.getElementById("sharePanel").hidden=true;document.getElementById("eventPanel").hidden=true;
 }
 async function viewReport(id, initial=false) {
-  if (saving || (!initial && !mayDiscard())) return;
+  if (saving || (!initial && !mayDiscard())) return false;
   try {
     const response = await apiFetch("/api/reports/"+id);
     if (!response.ok) throw new Error(await responseError(response));
@@ -127,8 +127,16 @@ async function viewReport(id, initial=false) {
     hasAccess=true;workflowVersion=data.version;workflowStatus=data.status;allowedFields=data.editable_fields;setPermissions(allowedFields);refreshExtraPermissions();
     isHydrating=false;setEditingState(Number(id)); calcRemainingDays(); updateCaptions(); baseline = snapshot();
     setView("form"); window.scrollTo({top:0,behavior:"smooth"}); schedulePreview();
-    showStatus("เปิดเอกสาร #"+id+" แล้ว แก้ไขและกดบันทึกการแก้ไขได้");
-  } catch(error) { showStatus(error.message,true); } finally {isHydrating=false;}
+    showStatus("เปิดเอกสาร #"+id+" แล้ว"+(["open","completed"].includes(workflowStatus)&&role==="issuer" ? " หากต้องการแก้ไข ให้กดเปิดแก้ไขเอกสาร" : ""));
+    return true;
+  } catch(error) { showStatus(error.message,true); return false; } finally {isHydrating=false;}
+}
+async function editReport(id) {
+  if(role!=="issuer" || !await viewReport(id))return;
+  if(["open","completed"].includes(workflowStatus)){
+    if(workflowStatus==="open" && !confirm("เอกสารนี้เปิดให้กรอกอยู่ การเปิดแก้ไขจะกลับเป็นร่างและยกเลิกลิงก์ผู้กรอกเดิม ต้องการดำเนินการต่อหรือไม่?"))return;
+    await workflowAction("edit");
+  }
 }
 async function deleteReport(id) {
   if (saving || !confirm("ต้องการลบเอกสาร #"+id+" หรือไม่?")) return;
@@ -152,7 +160,7 @@ function renderHistory() {
       const cell = document.createElement("td"); cell.dataset.label = label; cell.textContent = value || "-"; row.appendChild(cell);
     }
     const actions = document.createElement("td"); actions.className = "history-actions";
-    for (const [label,action] of [["แก้ไข / ดูข้อมูล",()=>viewReport(item.id)],["PDF",()=>downloadSaved(item.id)],["ลบ",()=>deleteReport(item.id)]]) {
+    for (const [label,action] of [["ดูข้อมูล",()=>viewReport(item.id)],["แก้ไข",()=>editReport(item.id)],["PDF",()=>downloadSaved(item.id)],["ลบ",()=>deleteReport(item.id)]]) {
       const button = document.createElement("button"); button.type="button"; button.textContent=label; button.addEventListener("click",action); actions.appendChild(button);
     }
     row.appendChild(actions); historyBody.appendChild(row);
@@ -276,6 +284,8 @@ function applyWorkflow(){
   document.getElementById("btnClear").hidden=role!=="issuer";document.getElementById("btnToggleHistory").hidden=role!=="issuer";
   const visible={btnIssuerLink:role==="issuer",btnIssue:role==="issuer"&&["draft","review"].includes(workflowStatus),btnSubmit:role==="filler"&&workflowStatus==="open",btnComplete:role==="issuer"&&workflowStatus==="review",btnReopen:role==="issuer"&&["review","completed"].includes(workflowStatus),btnEditDraft:role==="issuer"&&["open","completed"].includes(workflowStatus),btnRotate:role==="issuer"&&!!currentReportId&&workflowStatus!=="draft",btnRevoke:role==="issuer"&&!!currentReportId,btnReloadDocument:!!currentReportId,btnEvents:role==="issuer"&&!!currentReportId};
   for(const [id,show] of Object.entries(visible))document.getElementById(id).hidden=!show;
+  document.getElementById("submissionPanel").hidden=!visible.btnSubmit;
+  document.getElementById("btnSubmit").disabled=saving;
   if(role==="filler"){form.querySelector("details").hidden=true;document.getElementById("formHelp").textContent=workflowStatus==="open" ? "กรอกเฉพาะช่องที่เปิดไว้ บันทึกระหว่างทำได้ เมื่อพร้อมให้กดส่งกลับตรวจ" : "เอกสารปิดรับการกรอกแล้ว สามารถดูตัวอย่างและดาวน์โหลดได้";}
   window.contractDatePicker.sync();
   calcRemainingDays();
@@ -296,7 +306,7 @@ async function workflowAction(action){
     const result=await response.json();workflowVersion=result.version;workflowStatus=result.status;
     document.getElementById("sharePanel").hidden=!result.filler_path;
     if(result.filler_path)document.getElementById("fillerLink").value=new URL(result.filler_path,location.origin).href;
-    showStatus("ดำเนินการแล้ว: "+statusLabels[workflowStatus]);schedulePreview();
+    showStatus(action==="edit" ? "เปิดแก้ไขเอกสารแล้ว สถานะกลับเป็นร่าง แก้ไขและบันทึกได้ จากนั้นออกเอกสารเพื่อส่งตรวจใหม่" : "ดำเนินการแล้ว: "+statusLabels[workflowStatus]);schedulePreview();
     if(role==="issuer"&&!historyPanel.hidden)await loadHistory();
   }catch(error){showStatus(error.message,true);}
   finally{saving=false;applyWorkflow();}
