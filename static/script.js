@@ -23,7 +23,7 @@ if(linkToken)history.replaceState(null,"",location.pathname);
 window.addEventListener("hashchange",()=>{
   if(location.hash.length>1){tokenStore.setItem(credentialKey,location.hash.slice(1));sessionStorage.setItem(credentialKey,location.hash.slice(1));history.replaceState(null,"",location.pathname);location.reload();}
 });
-let isHydrating=false;
+let isHydrating=false, issuerViewOnly=false;
 let hasAccess=false, workflowVersion=null, workflowStatus="draft", allowedFields=[...workflowConfig.defaultDelegate];
 const statusLabels={draft:"ร่าง",open:"เปิดให้กรอก",review:"ส่งกลับตรวจ",completed:"เสร็จสิ้น"};
 async function apiFetch(url,options={}) {
@@ -32,7 +32,7 @@ async function apiFetch(url,options={}) {
 }
 const months = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
 let currentReportId = null, saving = false, baseline = "", historyItems = [];
-let previewSequence = 0, previewController = null, previewUrl = null, previewSnapshot = "", previewTimer;
+let previewSequence = 0, previewController = null, previewUrl = null, previewSnapshot = "", previewFilename="เอกสาร.pdf", previewTimer;
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "/static/worker.min.js";
 const field = name => form.elements.namedItem(name);
 function showStatus(message, error = false) {
@@ -41,7 +41,7 @@ function showStatus(message, error = false) {
   statusMsg.hidden = false;
 }
 function calcRemainingDays() {
-  if(isHydrating || (role === "issuer" && ["open","completed"].includes(workflowStatus)) || (role === "filler" && workflowStatus !== "open")) return;
+  if(isHydrating || (role === "issuer" && (issuerViewOnly || ["open","completed"].includes(workflowStatus))) || (role === "filler" && workflowStatus !== "open")) return;
   if(role === "filler" && !allowedFields.includes("remainingDays")) return;
   field("remainingDays").readOnly = field("remainingMode").value === "auto";
   const year = Number(field("reportYear").value)-543, month = months.indexOf(field("reportMonth").value), day = Number(field("reportDay").value);
@@ -109,12 +109,12 @@ function addExtra(group, label = "", count = "") {
 }
 function resetForm() {
   form.reset(); window.contractDatePicker.reset();form.querySelectorAll(".extra-row").forEach(row => row.remove());
-  workflowVersion=null;workflowStatus="draft";allowedFields=[...workflowConfig.defaultDelegate];
+  issuerViewOnly=false;workflowVersion=null;workflowStatus="draft";allowedFields=[...workflowConfig.defaultDelegate];
   setPermissions(allowedFields);
   field("reportDay").setCustomValidity(""); setEditingState(null); calcRemainingDays(); updateCaptions();
   document.getElementById("sharePanel").hidden=true;document.getElementById("eventPanel").hidden=true;
 }
-async function viewReport(id, initial=false) {
+async function viewReport(id, initial=false, forEdit=false) {
   if (saving || (!initial && !mayDiscard())) return false;
   try {
     const response = await apiFetch("/api/reports/"+id);
@@ -124,19 +124,25 @@ async function viewReport(id, initial=false) {
       const input = field(key); if (input && value !== null && key !== "extraRows") input.value = value;
     }
     for (const row of JSON.parse(data.extraRows || "[]")) addExtra(row.group,row.label,row.count);
-    hasAccess=true;workflowVersion=data.version;workflowStatus=data.status;allowedFields=data.editable_fields;setPermissions(allowedFields);refreshExtraPermissions();
+    issuerViewOnly=role==="issuer"&&!forEdit;hasAccess=true;workflowVersion=data.version;workflowStatus=data.status;allowedFields=data.editable_fields;setPermissions(allowedFields);refreshExtraPermissions();
     isHydrating=false;setEditingState(Number(id)); calcRemainingDays(); updateCaptions(); baseline = snapshot();
     setView("form"); window.scrollTo({top:0,behavior:"smooth"}); schedulePreview();
     showStatus("เปิดเอกสาร #"+id+" แล้ว"+(["open","completed"].includes(workflowStatus)&&role==="issuer" ? " หากต้องการแก้ไข ให้กดเปิดแก้ไขเอกสาร" : ""));
     return true;
   } catch(error) { showStatus(error.message,true); return false; } finally {isHydrating=false;}
 }
-async function editReport(id) {
-  if(role!=="issuer" || !await viewReport(id))return;
+async function editCurrentReport(){
+  if(role!=="issuer"||!currentReportId||saving)return;
   if(["open","completed"].includes(workflowStatus)){
-    if(workflowStatus==="open" && !confirm("เอกสารนี้เปิดให้กรอกอยู่ การเปิดแก้ไขจะกลับเป็นร่างและยกเลิกลิงก์ผู้กรอกเดิม ต้องการดำเนินการต่อหรือไม่?"))return;
+    if(workflowStatus==="open" && !confirm("เอกสารนี้เปิดให้กรอกอยู่ การเปิดแก้ไขจะกลับเป็นร่างและยกเลิกลิงก์ผู้กรอกเดิม ต้องการดำเนินการต่อหรือไม่?")){issuerViewOnly=true;applyWorkflow();return;}
     await workflowAction("edit");
+  }else{
+    issuerViewOnly=false;applyWorkflow();showStatus("เปิดแก้ไขเอกสารแล้ว แก้ไขและกดบันทึกการแก้ไขได้");
   }
+}
+async function editReport(id) {
+  if(role!=="issuer" || !await viewReport(id,false,true))return;
+  await editCurrentReport();
 }
 async function deleteReport(id) {
   if (saving || !confirm("ต้องการลบเอกสาร #"+id+" หรือไม่?")) return;
@@ -184,6 +190,7 @@ async function refreshPreview() {
     if(currentReportId){data.report_id=currentReportId;data.version=workflowVersion;}
     const response = await apiFetch("/api/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data),signal:previewController.signal});
     if (!response.ok) throw new Error(await responseError(response));
+    const filename=downloadFilename(response);
     const blob = await response.blob();
     if (sequence !== previewSequence) return false;
     if (!window.pdfjsLib) throw new Error("โหลดโปรแกรมแสดง PDF ไม่สำเร็จ กรุณาโหลดหน้าใหม่");
@@ -199,7 +206,7 @@ async function refreshPreview() {
     if (sequence !== previewSequence) return false;
     const nextUrl = URL.createObjectURL(blob);
     if (previewUrl) URL.revokeObjectURL(previewUrl);
-    previewUrl=nextUrl; previewSnapshot=current; previewBody.replaceChildren(fragment); previewStatus.textContent=pdf.numPages+" หน้า"; return true;
+    previewUrl=nextUrl; previewSnapshot=current;previewFilename=filename; previewBody.replaceChildren(fragment); previewStatus.textContent=pdf.numPages+" หน้า"; return true;
   } catch(error) {
     if (sequence === previewSequence && error.name !== "AbortError") previewStatus.textContent=error.message;
     return false;
@@ -233,7 +240,7 @@ btnDownloadPreview.addEventListener("click",async()=>{
   try {
     if(previewSnapshot!==snapshot() && !await refreshPreview())return;
     if(!previewUrl || previewSnapshot!==snapshot())return;
-    const link=document.createElement("a");link.href=previewUrl;link.download="daily-report-preview.pdf";link.click();
+    const link=document.createElement("a");link.href=previewUrl;link.download=previewFilename;link.click();
   } finally {btnDownloadPreview.disabled=false;}
 });
 document.getElementById("tabForm").addEventListener("click",()=>setView("form"));
@@ -267,10 +274,10 @@ function installPermissions(){
   }
 }
 function applyWorkflow(){
-  const editable=hasAccess && (role === "issuer" ? ["draft","review"].includes(workflowStatus) : workflowStatus === "open");
+  const editable=hasAccess && (role === "issuer" ? !issuerViewOnly&&["draft","review"].includes(workflowStatus) : workflowStatus === "open");
   document.querySelector(".app-layout").classList.toggle("authorized",hasAccess);
   document.getElementById("roleLabel").textContent=role === "issuer" ? "ผู้ออกเอกสาร" : "ผู้กรอกข้อมูล (ผู้ว่าจ้าง)";
-  document.getElementById("workflowStatus").textContent=hasAccess ? "เอกสาร "+(currentReportId?"#"+currentReportId+" · ":"")+statusLabels[workflowStatus]+(workflowVersion?" · รุ่น "+workflowVersion:"") : "ลิงก์ไม่ถูกต้องหรือถูกยกเลิก กรุณาขอลิงก์ใหม่จากผู้ออกเอกสาร";
+  document.getElementById("workflowStatus").textContent=hasAccess ? "เอกสาร "+(currentReportId?"#"+currentReportId+" · ":"")+statusLabels[workflowStatus]+(role==="issuer"&&issuerViewOnly?" · โหมดดูข้อมูล":"")+(workflowVersion?" · รุ่น "+workflowVersion:"") : "ลิงก์ไม่ถูกต้องหรือถูกยกเลิก กรุณาขอลิงก์ใหม่จากผู้ออกเอกสาร";
   for(const input of form.querySelectorAll("[name]"))input.disabled=!editable || (role === "filler"&&!allowedFields.includes(input.name));
   for(const key of ["reportDay","reportMonth","reportYear"])field(key).required=false;
   form.querySelectorAll("[data-permission]").forEach(input=>input.disabled=role!=="issuer"||!editable);
@@ -282,7 +289,7 @@ function applyWorkflow(){
   document.getElementById("btnSave").disabled=!editable||saving;
   document.getElementById("btnSaveAsNew").hidden=role!=="issuer"||!currentReportId||!editable;
   document.getElementById("btnClear").hidden=role!=="issuer";document.getElementById("btnToggleHistory").hidden=role!=="issuer";
-  const visible={btnIssuerLink:role==="issuer",btnIssue:role==="issuer"&&["draft","review"].includes(workflowStatus),btnSubmit:role==="filler"&&workflowStatus==="open",btnComplete:role==="issuer"&&workflowStatus==="review",btnReopen:role==="issuer"&&["review","completed"].includes(workflowStatus),btnEditDraft:role==="issuer"&&["open","completed"].includes(workflowStatus),btnRotate:role==="issuer"&&!!currentReportId&&workflowStatus!=="draft",btnRevoke:role==="issuer"&&!!currentReportId,btnReloadDocument:!!currentReportId,btnEvents:role==="issuer"&&!!currentReportId};
+  const visible={btnIssuerLink:role==="issuer",btnIssue:role==="issuer"&&!issuerViewOnly&&["draft","review"].includes(workflowStatus),btnSubmit:role==="filler"&&workflowStatus==="open",btnComplete:role==="issuer"&&workflowStatus==="review",btnReopen:role==="issuer"&&["review","completed"].includes(workflowStatus),btnEditDraft:role==="issuer"&&!!currentReportId&&(issuerViewOnly||["open","completed"].includes(workflowStatus)),btnRotate:role==="issuer"&&!!currentReportId&&workflowStatus!=="draft",btnRevoke:role==="issuer"&&!!currentReportId,btnReloadDocument:!!currentReportId,btnEvents:role==="issuer"&&!!currentReportId};
   for(const [id,show] of Object.entries(visible))document.getElementById(id).hidden=!show;
   document.getElementById("submissionPanel").hidden=!visible.btnSubmit;
   document.getElementById("btnSubmit").disabled=saving;
@@ -303,7 +310,7 @@ async function workflowAction(action){
   try{
     const response=await apiFetch("/api/reports/"+currentReportId+"/workflow",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,version:workflowVersion})});
     if(!response.ok)throw new Error(await responseError(response));
-    const result=await response.json();workflowVersion=result.version;workflowStatus=result.status;
+    const result=await response.json();workflowVersion=result.version;workflowStatus=result.status;if(action==="edit")issuerViewOnly=false;
     document.getElementById("sharePanel").hidden=!result.filler_path;
     if(result.filler_path)document.getElementById("fillerLink").value=new URL(result.filler_path,location.origin).href;
     showStatus(action==="edit" ? "เปิดแก้ไขเอกสารแล้ว สถานะกลับเป็นร่าง แก้ไขและบันทึกได้ จากนั้นออกเอกสารเพื่อส่งตรวจใหม่" : "ดำเนินการแล้ว: "+statusLabels[workflowStatus]);schedulePreview();
@@ -312,14 +319,14 @@ async function workflowAction(action){
   finally{saving=false;applyWorkflow();}
 }
 async function downloadSaved(id){
-  try{const response=await apiFetch("/api/reports/"+id+"/pdf");if(!response.ok)throw new Error(await responseError(response));const url=URL.createObjectURL(await response.blob());const link=document.createElement("a");link.href=url;link.download="daily-report-"+id+".pdf";link.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}catch(error){showStatus(error.message,true);}
+  try{const response=await apiFetch("/api/reports/"+id+"/pdf");if(!response.ok)throw new Error(await responseError(response));const url=URL.createObjectURL(await response.blob());const link=document.createElement("a");link.href=url;link.download=downloadFilename(response);link.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}catch(error){showStatus(error.message,true);}
 }
 async function boot(){
   if(!credential){applyWorkflow();document.getElementById("accessNotice").hidden=false;return;}
   if(role==="filler"){await viewReport(targetId,true);if(!hasAccess)document.getElementById("accessNotice").hidden=false;}
   else{try{const response=await apiFetch("/api/session");if(!response.ok)throw new Error(await responseError(response));hasAccess=true;applyWorkflow();baseline=snapshot();refreshPreview();}catch(error){applyWorkflow();document.getElementById("accessNotice").hidden=false;}}
 }
-for(const [id,action] of Object.entries({btnIssue:"issue",btnSubmit:"submit",btnComplete:"complete",btnReopen:"reopen",btnEditDraft:"edit",btnRotate:"rotate",btnRevoke:"revoke"}))document.getElementById(id).addEventListener("click",()=>workflowAction(action));
+for(const [id,action] of Object.entries({btnIssue:"issue",btnSubmit:"submit",btnComplete:"complete",btnReopen:"reopen",btnRotate:"rotate",btnRevoke:"revoke"}))document.getElementById(id).addEventListener("click",()=>workflowAction(action));
 document.getElementById("btnCopyLink").addEventListener("click",async()=>{const input=document.getElementById("fillerLink");try{await navigator.clipboard.writeText(input.value);showStatus("คัดลอกลิงก์ผู้กรอกแล้ว");}catch{input.select();showStatus("เลือกลิงก์แล้ว กดคัดลอกได้เลย");}});
 document.getElementById("btnEvents").addEventListener("click",async()=>{
   const panel=document.getElementById("eventPanel");panel.replaceChildren();
@@ -333,3 +340,12 @@ document.getElementById("btnIssuerLink").addEventListener("click",async()=>{
   const input=document.getElementById("issuerLinkValue");input.value=url.href;document.getElementById("issuerLinkPanel").hidden=false;
   try{await navigator.clipboard.writeText(url.href);showStatus("คัดลอกลิงก์จัดการส่วนตัวแล้ว เก็บไว้ใช้เอง ไม่ส่งให้ผู้กรอก");}catch{input.select();showStatus("เลือกลิงก์ส่วนตัวแล้ว กดคัดลอกเพื่อเก็บไว้ได้");}
 });
+
+function downloadFilename(response){
+  const header=response.headers.get("Content-Disposition")||"";
+  const encoded=/filename\*=UTF-8''([^;]+)/i.exec(header);
+  if(encoded){try{return decodeURIComponent(encoded[1].trim());}catch{}}
+  const plain=/filename="([^"]+)"|filename=([^;]+)/i.exec(header);
+  return plain ? (plain[1]||plain[2]).trim() : "เอกสาร.pdf";
+}
+document.getElementById("btnEditDraft").addEventListener("click",editCurrentReport);

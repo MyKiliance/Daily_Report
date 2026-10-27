@@ -7,9 +7,22 @@ import os
 import re
 from pathlib import Path
 import secrets
+import unicodedata
 from flask import abort, jsonify, render_template, request, send_file
 
 STATUSES = {'draft': 'ร่าง', 'open': 'เปิดให้กรอก', 'review': 'ส่งกลับตรวจ', 'completed': 'เสร็จสิ้น'}
+
+
+def pdf_filename(data):
+    """Use the project name, while keeping it portable across file systems."""
+    title = str(data.get('projectSubtitle') or '').strip() or str(data.get('projectTitle') or '').strip() or 'เอกสาร'
+    title = unicodedata.normalize('NFC', title)
+    title = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]', '-', title)
+    title = re.sub(r'\s+', ' ', title).strip(' .-')
+    title = title.encode('utf-8')[:200].decode('utf-8', errors='ignore').rstrip(' .-') or 'เอกสาร'
+    if re.fullmatch(r'(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?',title):
+        title = '_'+title
+    return title+'.pdf'
 
 
 def init_schema(cur, postgres):
@@ -309,7 +322,7 @@ def install(app, services):
     def pdf(report_id):
         record, _, _ = access(report_id)
         return send_file(io.BytesIO(s['build_pdf'](record)), mimetype='application/pdf', as_attachment=True,
-                         download_name=f'daily-report-{report_id}.pdf')
+                         download_name=pdf_filename(record))
 
     @app.route('/api/preview', methods=['POST'])
     def preview():
@@ -324,7 +337,7 @@ def install(app, services):
         else:
             require_issuer()
             data = s['report_data'](raw=raw)
-        return send_file(io.BytesIO(s['build_pdf'](data)), mimetype='application/pdf', download_name='preview.pdf')
+        return send_file(io.BytesIO(s['build_pdf'](data)), mimetype='application/pdf', download_name=pdf_filename(data))
 
     @app.route('/api/backup')
     def backup():
