@@ -262,6 +262,29 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(filler.get(f'/api/reports/{report_id}').status_code,404)
         self.assertEqual(self.client.put(f'/api/reports/{report_id}',json={'version':3,'projectTitle':'New title'}).status_code,200)
 
+    def test_issuer_can_edit_after_approval_without_keeping_old_approval(self):
+        report_id,filler,_=self.issue()
+        url=f'/api/reports/{report_id}'
+        filler.post(url+'/workflow',json={'version':2,'action':'submit'})
+        self.client.post(url+'/workflow',json={'version':3,'action':'complete'})
+        self.assertEqual(self.client.get(url).json['status'],'completed')
+        response=self.client.post(url+'/workflow',json={'version':4,'action':'edit'})
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json['status'],'draft')
+        self.assertEqual(filler.get(url).status_code,404)
+        self.assertEqual(self.client.put(url,json={'version':5,'workDone':'Corrected after approval'}).status_code,200)
+        self.assertEqual(self.client.get(url).json['workDone'],'Corrected after approval')
+        self.assertEqual(self.client.get(url).json['status'],'draft')
+        self.assertEqual(self.client.post(url+'/workflow',json={'version':6,'action':'complete'}).status_code,400)
+        events=self.client.get(url+'/events').json
+        self.assertEqual([e['action'] for e in events[:3]],['saved','edit','complete'])
+
+    def test_submit_action_is_after_form_fields(self):
+        html=self.client.get('/fill/1').get_data(as_text=True)
+        self.assertEqual(html.count('id="btnSubmit"'),1)
+        self.assertGreater(html.index('id="btnSubmit"'),html.index('name="dueDate"'))
+        self.assertLess(html.index('id="btnSubmit"'),html.index('</form>'))
+
     def test_parallel_saves_have_one_winner(self):
         from concurrent.futures import ThreadPoolExecutor
         import threading
