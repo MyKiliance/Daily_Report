@@ -110,6 +110,21 @@ class ReportsTest(unittest.TestCase):
         self.assertEqual(reports.canonical_row({'reportday':'24','worklocation':'A','staff_office':'0'}),
                          {'reportDay':'24','workLocation':'A','staff_office':'0'})
 
+    def test_pdf_download_names_use_project_name(self):
+        from urllib.parse import unquote
+        from workflow import pdf_filename
+        data=dict(self.data,projectSubtitle='โครงการปรับปรุงห้องเรียน')
+        report_id=self.create(data)
+        for response in [self.client.get(f'/api/reports/{report_id}/pdf'),self.client.post('/api/preview',json=data)]:
+            self.assertEqual(response.status_code,200)
+            self.assertIn('โครงการปรับปรุงห้องเรียน.pdf',unquote(response.headers['Content-Disposition']))
+        self.assertEqual(pdf_filename({'projectSubtitle':'  ','projectTitle':'ชื่อรายงาน'}),'ชื่อรายงาน.pdf')
+        self.assertEqual(pdf_filename({}),'เอกสาร.pdf')
+        self.assertEqual(pdf_filename({'projectSubtitle':'CON'}),'_CON.pdf')
+        unsafe=pdf_filename({'projectSubtitle':'../โครงการ\\ทดสอบ: "A"\n*?<>|'})
+        self.assertFalse(any(char in unsafe for char in '/\\:*?"<>|\n'))
+        self.assertLessEqual(len(pdf_filename({'projectSubtitle':'โครงการ'*100}).encode('utf-8')),204)
+
     def test_pdf_overflow_retains_all_lines(self):
         try:
             import fitz
